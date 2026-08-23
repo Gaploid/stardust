@@ -1,3 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Up to 2 million WebGL particles assemble into Earth, the Moon, a cube, a torus, or a sphere. Water, particle, and fog modes; stir the surface with your cursor. Real NASA and NOAA maps.">
+<meta property="og:title" content="Stardust">
+<meta property="og:description" content="2M WebGL particles form planets you can stir with your cursor.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>&#x2728;</text></svg>">
 <title>Stardust</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -132,6 +142,8 @@
     #hud-stat { bottom: 14px; right: 18px; }
   }
 </style>
+</head>
+<body>
 
 <canvas id="stage"></canvas>
 <div class="hud" id="hud-title"><strong>Stardust</strong><span id="hud-sub">initializing…</span></div>
@@ -1146,3 +1158,6 @@
   requestAnimationFrame(frame);
 })();
 </script>
+
+</body>
+</html>
