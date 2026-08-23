@@ -54,16 +54,22 @@
   .hud button:hover { color: #9db0c4; }
   .hud button:focus-visible { outline: 1px solid #66788c; outline-offset: 3px; }
   .hud button.on { color: #c2d4e6; border-bottom-color: #c2d4e6; }
-  .hud a {
-    display: block;
-    width: max-content;
-    margin-top: 3px;
-    color: #66788c;
-    text-decoration: none;
-    border-bottom: 1px solid transparent;
+  #hud-github {
+    top: 22px;
+    right: 26px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 14px;
     pointer-events: auto;
+    color: #c2d4e6;
+    text-decoration: none;
+    background: rgba(8, 12, 18, 0.7);
+    border: 1px solid #2a3644;
+    border-radius: 4px;
   }
-  .hud a:hover { color: #9db0c4; border-bottom-color: #9db0c4; }
+  #hud-github:hover { border-color: #66788c; color: #ffffff; background: rgba(16, 24, 34, 0.85); }
+  #hud-github svg { display: block; }
   #hud-title  { top: 22px; left: 26px; }
   #hud-mode   { top: 96px; left: 26px; pointer-events: auto; display: flex; gap: 16px; }
   #hud-shape  { top: 128px; left: 26px; pointer-events: auto; display: flex; gap: 16px; }
@@ -115,12 +121,17 @@
     #hud-mode { top: 78px; left: 18px; gap: 12px; }
     #hud-shape { top: 106px; left: 18px; gap: 12px; }
     #hud-adv { top: 134px; left: 18px; }
+    #hud-github { top: 16px; right: 18px; padding: 6px 10px; }
     #hud-stat { bottom: 14px; right: 18px; }
   }
 </style>
 
 <canvas id="stage"></canvas>
-<div class="hud" id="hud-title"><strong>Stardust</strong><span id="hud-sub">initializing…</span><a id="repo-link" href="https://github.com/Gaploid/stardust" target="_blank" rel="noopener">github ↗</a></div>
+<div class="hud" id="hud-title"><strong>Stardust</strong><span id="hud-sub">initializing…</span></div>
+<a class="hud" id="hud-github" href="https://github.com/Gaploid/stardust" target="_blank" rel="noopener" aria-label="Stardust on GitHub">
+  <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+  <span>github</span>
+</a>
 <div class="hud" id="hud-mode">
   <button data-mode="water" class="on">water</button>
   <button data-mode="particles">particles</button>
@@ -136,9 +147,9 @@
 <div class="hud" id="hud-adv">
   <button id="adv-toggle">advanced</button>
   <div id="adv-panel" hidden>
-    <label>particle size <input type="range" id="set-size" min="0.15" max="1.5" step="0.05" value="0.5"><span id="val-size">0.50</span></label>
-    <label>hand size <input type="range" id="set-hand" min="0.06" max="1.25" step="0.01" value="0.3"><span id="val-hand">0.30</span></label>
-    <label>particles <input type="range" id="set-count" min="20000" max="1000000" step="10000" value="500000"><span id="val-count">500k</span></label>
+    <label>particle size <input type="range" id="set-size" min="0.15" max="1.5" step="0.05" value="0.25"><span id="val-size">0.25</span></label>
+    <label>hand size <input type="range" id="set-hand" min="0.06" max="1.25" step="0.01" value="0.19"><span id="val-hand">0.19</span></label>
+    <label>particles <input type="range" id="set-count" min="20000" max="2000000" step="20000" value="800000"><span id="val-count">800k</span></label>
     <label>focus <input type="range" id="set-fov" min="0" max="100" step="1" value="30"><span id="val-fov">30%</span></label>
   </div>
 </div>
@@ -355,7 +366,7 @@
   U.uRipAxis = gl.getUniformLocation(prog, 'uRipAxis[0]');
 
   // ---------- particles ----------
-  var N = 1000000;         // allocated capacity; how many are drawn is a setting
+  var N = 2000000;         // allocated capacity; how many are drawn is a setting
   var target = new Float32Array(N * 3);
   var normal = new Float32Array(N * 3);
   var shadeArr = new Float32Array(N);
@@ -603,20 +614,16 @@
   bindAttr('aSeed', seed, 2);
 
   // ---------- shape switching: scatter → swap targets → reassemble ----------
-  var shapeCache = { earth: { t: target, n: normal, s: shadeArr, ti: tintArr } };
+  // shapes are regenerated into the shared arrays: at 2M capacity caching every
+  // shape would cost hundreds of MB, and generation happens during the cloud phase
   var shape = 'earth', pendingShape = null;
   function applyShape(name) {
     shape = name;
-    if (!shapeCache[name]) {
-      var t = new Float32Array(N * 3), nn = new Float32Array(N * 3), ss = new Float32Array(N), tt = new Float32Array(N * 4);
-      GEN[name](t, nn, ss, tt);
-      shapeCache[name] = { t: t, n: nn, s: ss, ti: tt };
-    }
-    var d = shapeCache[name];
-    gl.bindBuffer(gl.ARRAY_BUFFER, bufTarget); gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.t);
-    gl.bindBuffer(gl.ARRAY_BUFFER, bufNormal); gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.n);
-    gl.bindBuffer(gl.ARRAY_BUFFER, bufShade); gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.s);
-    gl.bindBuffer(gl.ARRAY_BUFFER, bufTint); gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.ti);
+    GEN[name](target, normal, shadeArr, tintArr);
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufTarget); gl.bufferSubData(gl.ARRAY_BUFFER, 0, target);
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufNormal); gl.bufferSubData(gl.ARRAY_BUFFER, 0, normal);
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufShade); gl.bufferSubData(gl.ARRAY_BUFFER, 0, shadeArr);
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufTint); gl.bufferSubData(gl.ARRAY_BUFFER, 0, tintArr);
   }
   function setShape(name) {
     if (!GEN[name] || name === (pendingShape || shape)) return;
@@ -640,7 +647,7 @@
   // advanced settings: particle size, hand size, particle count, focus position
   // focus slides the focal plane THROUGH the object: 0 = front edge sharp, 1 = back edge
   // focus 0.3 = middle of the visible near hemisphere — sharpest default look
-  var SET = { size: 0.5, hand: 0.3, count: 500000, focus: 0.3 };
+  var SET = { size: 0.25, hand: 0.19, count: 800000, focus: 0.3 };
   var fovF = 2.5;          // fixed 30mm-equivalent framing
   function mat3RotXY(pitch, yaw) {
     var cy = Math.cos(yaw), sy = Math.sin(yaw);
