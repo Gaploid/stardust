@@ -53,6 +53,7 @@
     background: none;
     border: none;
     margin: 0;
+    -webkit-tap-highlight-color: transparent;
     padding: 0 0 3px;
     font: inherit;
     letter-spacing: inherit;
@@ -81,9 +82,21 @@
   #hud-github:hover { border-color: #66788c; color: #ffffff; background: rgba(16, 24, 34, 0.85); }
   #hud-github svg { display: block; }
   #hud-title  { top: 22px; left: 26px; }
-  #hud-mode   { top: 96px; left: 26px; pointer-events: auto; display: flex; gap: 16px; }
-  #hud-shape  { top: 128px; left: 26px; pointer-events: auto; display: flex; gap: 16px; }
-  #hud-adv    { top: 160px; left: 26px; pointer-events: auto; }
+  #hud-controls {
+    top: 96px;
+    left: 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+    pointer-events: auto;
+  }
+  #hud-mode, #hud-shape { display: flex; gap: 6px 16px; flex-wrap: wrap; }
+  .hud button .ic {
+    margin-right: 6px;
+    font-size: 12px;
+    filter: saturate(0.6) brightness(0.9);
+  }
+  .hud button.on .ic { filter: none; }
   #adv-panel {
     margin-top: 10px;
     display: flex;
@@ -134,12 +147,17 @@
   }
   @media (max-width: 640px) {
     #hud-help { display: none; }
-    #hud-title { top: 16px; left: 18px; }
-    #hud-mode { top: 78px; left: 18px; gap: 12px; }
-    #hud-shape { top: 106px; left: 18px; gap: 12px; }
-    #hud-adv { top: 134px; left: 18px; }
-    #hud-github { top: 16px; right: 18px; padding: 6px 10px; }
-    #hud-stat { bottom: 14px; right: 18px; }
+    #hud-title { top: 14px; left: 16px; }
+    #hud-github { top: 14px; right: 16px; padding: 8px 10px; }
+    #hud-github span { display: none; }
+    #hud-controls { top: 78px; left: 16px; right: 16px; gap: 10px; }
+    .hud { font-size: 12px; }
+    .hud button { padding: 5px 0 6px; }
+    #hud-mode, #hud-shape { gap: 4px 14px; }
+    #adv-panel { max-width: calc(100vw - 64px); }
+    #adv-panel label { grid-template-columns: 84px 1fr 44px; }
+    #adv-panel input[type="range"] { width: 100%; height: 26px; }
+    #hud-stat { bottom: 12px; right: 16px; }
   }
 </style>
 </head>
@@ -151,21 +169,22 @@
   <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
   <span>github</span>
 </a>
-<div class="hud" id="hud-mode">
-  <button data-mode="water" class="on">water</button>
-  <button data-mode="particles">particles</button>
-  <button data-mode="fog">fog</button>
+<div class="hud" id="hud-controls">
+<div id="hud-mode">
+  <button data-mode="water" class="on"><span class="ic">💧</span>water</button>
+  <button data-mode="particles"><span class="ic">✨</span>particles</button>
+  <button data-mode="fog"><span class="ic">🌫️</span>fog</button>
 </div>
-<div class="hud" id="hud-shape">
-  <button data-shape="earth" class="on">earth</button>
-  <button data-shape="moon">moon</button>
-  <button data-shape="sun">sun</button>
-  <button data-shape="cube">cube</button>
-  <button data-shape="torus">torus</button>
-  <button data-shape="sphere">sphere</button>
+<div id="hud-shape">
+  <button data-shape="earth" class="on"><span class="ic">🌍</span>earth</button>
+  <button data-shape="moon"><span class="ic">🌙</span>moon</button>
+  <button data-shape="sun"><span class="ic">☀️</span>sun</button>
+  <button data-shape="cube"><span class="ic">🧊</span>cube</button>
+  <button data-shape="torus"><span class="ic">🍩</span>torus</button>
+  <button data-shape="sphere"><span class="ic">⚪</span>sphere</button>
 </div>
-<div class="hud" id="hud-adv">
-  <button id="adv-toggle">advanced</button>
+<div id="hud-adv">
+  <button id="adv-toggle"><span class="ic">⚙️</span>advanced</button>
   <div id="adv-panel" hidden>
     <label>particle size <input type="range" id="set-size" min="0.15" max="1.5" step="0.05" value="0.25"><span id="val-size">0.25</span></label>
     <label>hand size <input type="range" id="set-hand" min="0.06" max="1.25" step="0.01" value="0.19"><span id="val-hand">0.19</span></label>
@@ -173,6 +192,7 @@
     <label>focus <input type="range" id="set-fov" min="0" max="100" step="1" value="13"><span id="val-fov">13%</span></label>
     <label>sea floor <input type="checkbox" id="set-floor" checked><span id="val-floor">on</span></label>
   </div>
+</div>
 </div>
 <div class="hud" id="hud-help">hover — touch &nbsp;·&nbsp; drag — rotate &nbsp;·&nbsp; click — scatter &nbsp;·&nbsp; wheel — zoom</div>
 <div class="hud" id="hud-stat"><span id="hud-phase">forming</span><br><span id="hud-fps"></span></div>
@@ -197,6 +217,8 @@
   // advanced settings: particle size, hand size, particle count, focus, sea floor
   var SET = { size: 0.25, hand: 0.19, count: 700000, focus: 0.13, floor: true };
   var fovF = 2.5;     // fixed 30mm-equivalent framing
+  var isCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  if (isCoarse) SET.count = 300000;   // phone GPUs: start lighter, still adjustable
 
   // ---------- shaders ----------
   var VSH = [
@@ -845,7 +867,7 @@
     shape = name;
     if (name === 'sun' && !wasSun) {
       preSun = { size: SET.size, count: SET.count };
-      applySizeCount(0.6, 1000000);
+      applySizeCount(0.6, isCoarse ? 500000 : 1000000);
     } else if (name !== 'sun' && wasSun && preSun) {
       applySizeCount(preSun.size, preSun.count);
       preSun = null;
@@ -914,7 +936,7 @@
 
   // ---------- animation state ----------
   var PH_ASSEMBLE = 0, PH_HOLD = 1, PH_DISPERSE = 2, PH_CLOUD = 3;
-  var DUR = [3.8, 7.5, 2.6, 1.3];
+  var DUR = [2.4, 7.5, 1.4, 0.6];   // snappy shape switches: form / hold / burst / cloud
   var phase = PH_ASSEMBLE, phaseT = 0;
   var assemble = 0;
   var scatSeed = { pitch: 0.4, yaw: 1.3 };
@@ -1044,6 +1066,14 @@
   var dragging = false, moved = 0, lastX = 0, lastY = 0;
   var lastSpawnX = -1e9, lastSpawnY = -1e9;
   var lastEvX = 0, lastEvY = 0;                 // previous event position — for true speed
+  var activePtrs = {};                          // pointerId -> [x, y]
+  var pinch = null;                             // two-finger zoom state
+  function ptrGap() {
+    var ids = Object.keys(activePtrs);
+    var A = activePtrs[ids[0]], B = activePtrs[ids[1]];
+    var gx = A[0] - B[0], gy = A[1] - B[1];
+    return Math.sqrt(gx*gx + gy*gy);
+  }
 
   function updateMouse(ev) {
     var rect = canvas.getBoundingClientRect();
@@ -1062,13 +1092,29 @@
   }
 
   canvas.addEventListener('pointerdown', function (ev) {
+    canvas.setPointerCapture(ev.pointerId);
+    activePtrs[ev.pointerId] = [ev.clientX, ev.clientY];
+    if (Object.keys(activePtrs).length === 2) {
+      // second finger: pinch zoom — no rotation, no tap-scatter
+      pinch = { gap0: ptrGap(), dist0: dist };
+      dragging = false; moved = 100;
+      canvas.classList.remove('dragging');
+      return;
+    }
     dragging = true; moved = 0;
     lastX = ev.clientX; lastY = ev.clientY;
     updateMouse(ev);
     canvas.classList.add('dragging');
-    canvas.setPointerCapture(ev.pointerId);
   });
   canvas.addEventListener('pointermove', function (ev) {
+    if (activePtrs[ev.pointerId]) activePtrs[ev.pointerId] = [ev.clientX, ev.clientY];
+    if (pinch) {
+      if (Object.keys(activePtrs).length >= 2) {
+        var pg = ptrGap();
+        if (pg > 10) dist = Math.max(2.1, Math.min(8, pinch.dist0 * pinch.gap0 / pg));
+      }
+      return;
+    }
     updateMouse(ev);
     // touch strength grows with speed: delta since the previous event, not since
     // the previous wave — otherwise it saws in sync with wave births (visible jerks)
@@ -1097,9 +1143,20 @@
     dragging = false;
     canvas.classList.remove('dragging');
   }
-  canvas.addEventListener('pointerup', endDrag);
-  canvas.addEventListener('pointercancel', function () { dragging = false; canvas.classList.remove('dragging'); });
-  canvas.addEventListener('pointerleave', function () { hasMouse = false; });
+  canvas.addEventListener('pointerup', function (ev) {
+    delete activePtrs[ev.pointerId];
+    if (Object.keys(activePtrs).length < 2) pinch = null;
+    endDrag();
+  });
+  canvas.addEventListener('pointercancel', function (ev) {
+    delete activePtrs[ev.pointerId];
+    pinch = null;
+    dragging = false; canvas.classList.remove('dragging');
+  });
+  canvas.addEventListener('pointerleave', function (ev) {
+    delete activePtrs[ev.pointerId];
+    hasMouse = false;
+  });
   canvas.addEventListener('wheel', function (ev) {
     ev.preventDefault();
     dist = Math.max(2.1, Math.min(8, dist + ev.deltaY * 0.0022));
@@ -1155,6 +1212,11 @@
   bindSlider('set-fov', 'val-fov', function (v) {
     SET.focus = v / 100;   // focal plane position inside the object
   }, function (v) { return v + '%'; });
+  if (isCoarse) {
+    // reflect the lighter mobile default in the panel
+    document.getElementById('set-count').value = SET.count;
+    document.getElementById('val-count').textContent = Math.round(SET.count / 1000) + 'k';
+  }
   var floorToggle = document.getElementById('set-floor');
   floorToggle.addEventListener('change', function () {
     SET.floor = floorToggle.checked;
