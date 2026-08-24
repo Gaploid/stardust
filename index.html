@@ -273,11 +273,73 @@
     text-transform: uppercase;
   }
   #ld-pct { color: #9db0c4; font-variant-numeric: tabular-nums; }
+  /* ---------- in-place build readout ---------- */
+  /* Switching shapes never blacks the page out: the cloud keeps swirling and
+     the progress sits where the shape is about to appear, in its place. */
+  #build {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    pointer-events: none;
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: #66788c;
+    opacity: 0;
+    transition: opacity 0.35s ease;
+    /* the readout stands where the shape does — portrait phones push both down */
+    transform: translateY(calc(var(--yoff, 0) * -50vh));
+  }
+  #build.on { opacity: 1; }
+  /* a hole punched in the cloud so the readout stays legible over it */
+  #build::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: min(440px, 88vw);
+    height: min(440px, 88vw);
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(4, 6, 10, 0.9) 0%, rgba(4, 6, 10, 0.72) 42%, rgba(4, 6, 10, 0) 70%);
+  }
+  #bd-name, #bd-track, #bd-line { position: relative; }
+  #bd-name {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.3em;
+    text-indent: 0.3em;
+    text-transform: uppercase;
+    color: #c2d4e6;
+  }
+  #bd-track {
+    width: min(220px, 46vw);
+    height: 1px;
+    background: #1b2632;
+    overflow: hidden;
+  }
+  #bd-fill {
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, #2f4a68, #c2d4e6);
+    transition: width 0.2s linear;
+  }
+  #bd-line {
+    display: flex;
+    gap: 16px;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+  #bd-pct { color: #9db0c4; font-variant-numeric: tabular-nums; }
   /* the HUD stays dark until the world is ready */
   .hud { transition: opacity 0.7s ease 0.1s; }
   body.loading .hud { opacity: 0; }
   @media (prefers-reduced-motion: reduce) {
-    #loader, #ld-fill, .hud { transition: none; }
+    #loader, #ld-fill, #build, #bd-fill, .hud { transition: none; }
   }
 </style>
 </head>
@@ -359,6 +421,11 @@
   <div id="ld-track"><div id="ld-fill"></div></div>
   <div id="ld-line"><span id="ld-step">starting</span><span id="ld-pct">0%</span></div>
 </div>
+<div id="build" aria-hidden="true">
+  <div id="bd-name">earth</div>
+  <div id="bd-track"><div id="bd-fill"></div></div>
+  <div id="bd-line"><span id="bd-step">forming</span><span id="bd-pct">0%</span></div>
+</div>
 
 <script>
 (function () {
@@ -392,6 +459,34 @@
     loaderEl.classList.add('done');
     document.body.classList.remove('loading');
   }
+
+  // ---------- the in-place build readout ----------
+  // Switching shapes doesn't reallocate anything, so it never earns the full
+  // loading screen — but at a few million particles the cloud does hang around
+  // for seconds with nothing to read. This puts the same bar where the shape
+  // itself is about to appear, and only once the wait is long enough to notice.
+  var buildEl = document.getElementById('build');
+  var bdName = document.getElementById('bd-name');
+  var bdStep = document.getElementById('bd-step');
+  var bdFill = document.getElementById('bd-fill');
+  var bdPct = document.getElementById('bd-pct');
+  var BD_DELAY = 200;   // ms of building before an unannounced build shows the bar
+  var BD_LEFT = 1000;   // ...and only if that much building is still ahead of it
+  var BD_SLOW = 1600;   // predicted build time that earns the bar from the click on
+  var bdRate = 0;       // ms of wall clock per particle, measured on the last build
+
+  function bdSet(frac) {
+    bdFill.style.width = (frac * 100).toFixed(1) + '%';
+    bdPct.textContent = Math.round(frac * 100) + '%';
+  }
+  function bdShow(name, label) {
+    bdName.textContent = name;
+    bdStep.textContent = label;
+    bdFill.style.width = '0';
+    bdPct.textContent = '';   // no number until there is real progress to report
+    buildEl.classList.add('on');
+  }
+  function bdHide() { buildEl.classList.remove('on'); }
   // Steps are { label, n, chunk, run(i0, i1) }. The chunk size adapts after
   // every call so one call lands near half the budget on any machine — never
   // above step.chunk, which is how big the staging buffer actually is.
@@ -1537,7 +1632,8 @@
       applySizeCount(preSun.size, preSun.count);
       preSun = null;
     }
-    genJob = { name: name, i: 0, seed: (Math.random() * 1e9) | 0 };
+    genJob = { name: name, i: 0, seed: (Math.random() * 1e9) | 0, t0: performance.now(), shown: buildEl.classList.contains('on') };
+    if (genJob.shown) bdShow(name, 'forming');   // announced at the click: the bar carries on into the build
     quenchFlares();
     if (name === 'sun') {
       seedVortices(mulberry32(genJob.seed ^ 0x9E3779B9));
@@ -1555,13 +1651,30 @@
       uploadRange(genJob.i, n);
       genJob.i += n;
     } while (genJob.i < N && performance.now() - t0 < budgetMs);
-    if (genJob.i >= N) genJob = null;
+    if (genJob.i >= N) {
+      bdRate = (performance.now() - genJob.t0) / N;   // what the next switch is judged by
+      genJob = null; bdHide(); return;
+    }
+    // An unannounced build still earns the bar if it turns out slow: past a
+    // short grace period, and only if the rate so far says a real wait is left.
+    if (!genJob.shown && genJob.i > 0) {
+      var el = performance.now() - genJob.t0;
+      if (el > BD_DELAY && (N - genJob.i) * (el / genJob.i) > BD_LEFT) {
+        genJob.shown = true;
+        bdShow(genJob.name, 'forming');
+      }
+    }
+    if (genJob.shown) bdSet(genJob.i / N);
   }
   function setShape(name) {
     if (!GEN[name] || name === (pendingShape || shape)) return;
     shapeBtns.forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-shape') === name); });
     if (reducedMotion) { applyShape(name); return; }
     pendingShape = name;
+    // A build the last one says will be slow is announced from the click: the
+    // burst leaves a cloud so thin it reads as an empty screen, and the wait
+    // before the new shape starts forming is the part that feels broken.
+    if (bdRate * N > BD_SLOW) bdShow(name, 'scattering');
     if (phase === PH_HOLD || phase === PH_ASSEMBLE) {
       phase = PH_DISPERSE; phaseT = (1 - assemble) * DUR[PH_DISPERSE];
     } else if (phase === PH_CLOUD) {
@@ -1748,6 +1861,7 @@
     aspect = w / h;
     // portrait phones: push the shape below the menu block
     yOff = aspect < 0.8 ? -0.17 : 0;
+    buildEl.style.setProperty('--yoff', String(yOff));   // the readout follows the shape down
     pxScale = fovF * 0.0075 * h * 0.5 * SET.size;
     pxRef = fovF * 0.0075 * h * 0.5 * SIZE_REF;
     pxDof = fovF * 0.0075 * h * 0.5 * DOF_REF;
@@ -2374,6 +2488,7 @@
   // count does: allocation discards everything, so the world is made again.
   function buildWorld(count, shapeName, done) {
     genJob = null; pendingShape = null; drawCount = 0;
+    bdHide();   // a resize of the world gets the full screen, not the in-place bar
     if (!allocParticles(count)) {
       if (!N) { document.getElementById('fallback').style.display = 'flex'; return; }
       count = N;   // the driver said no: settle for the capacity that worked
