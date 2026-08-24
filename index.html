@@ -370,10 +370,11 @@
     '  float night = smoothstep(0.08, -0.3, dot(n, L));',
     '  float city = max(aExtra, 0.0) * night * uCity * e;',
     '  lum += city * 2.4;',
-    // atmosphere shell: brightest at the limb, lit on the day side
+    // atmosphere: huge, ultra-dim, ultra-soft particles overlap into a smooth
+    // haze — almost invisible over the disc, summing into a glow at the limb
     '  float atmo = step(aExtra, -0.5) * uAtmo;',
     '  float dnl = hl * 2.0 - 1.0;',
-    '  lum = mix(lum, (0.15 + 0.85*hl) * (0.5 + 3.0*pow(1.0 - nv, 2.0)), atmo * e);',
+    '  lum = mix(lum, (0.1 + 0.6*hl) * (0.03 + 0.55*pow(1.0 - nv, 2.5)), atmo * e);',
     // shell particles (atmosphere/corona) vanish while their effect is off
     '  lum *= 1.0 - step(aExtra, -0.5) * (1.0 - max(uSun, uAtmo)) * e;',
     // depth fade: the far side is dimmer (softer for the glowing sun)
@@ -403,13 +404,13 @@
     '  vCol = col * lum * tw;',
     '  float pMul = mix(1.0, mix(0.55, 6.0, puffSel), uPuff);',
     '  float sizePx = clamp(aSeed.y * uPxScale * uSizeMul * pMul / w, 0.6, mix(4.0 * uSizeMul, 64.0, uPuff));',
-    '  sizePx *= 1.0 + prom * 0.8 + cor * 0.5 + atmo * 1.6;',   // plasma and air are chunkier
+    '  sizePx *= 1.0 + prom * 0.8 + cor * 0.5 + atmo * 5.0;',   // air blurs into a veil
     // depth of field: away from the focal plane points blur into bokeh discs —
     // bigger, softer, dimmer (light spread over a larger area)
     '  float coc = uDofPx * abs(w - uFocusW) / w;',
     '  float blurred = sqrt(sizePx*sizePx + coc*coc);',
     '  vCol *= sizePx*sizePx / (blurred*blurred);',
-    '  vSoft = max(coc / (coc + 3.0), atmo * 0.85);',
+    '  vSoft = max(coc / (coc + 3.0), atmo * 0.95);',
     '  gl_PointSize = min(blurred, 72.0);',
     '}'
   ].join('\n');
@@ -578,6 +579,20 @@
     return ((idx & 1) ? (b & 15) : (b >> 4)) / 15;
   }
 
+  // Saturn: per-latitude body colors + radial ring profile from NASA textures
+  var SAT_BODY = 'gR4FjicGlTwNok4VpVYZqlsdrWIjtGcou24tvnAuwnYyyH04y4M8zIE6z4I91IZB1oxF2ZJI3ZhK4JxL4p9K4p1F455E5aBG56RJ6KVK6KVK6KNH6KVH6aZG6alH6alH6q1K6qxJ66tH6qhE66tI7KtK7K1M7KxJ7K9L7LBM7LVU7LVU7LlZ7LtZ67xY6r5V6r9V6r5U6sFW6sBU6r5S6b5R6bxO6bhI6LlG6LdC6LhC6LdC6LlD6LtH6MNR6MdX6c1g6c1g6c1e6Mxb6c1d6MhV6MNN571H571G6L1H6LxH57pD6L1H6L5J6L9K6L5J6MFM58BK58RO58JJ58VM58dO58VO58BI5sBG5r5D571F57tF6L1H6LtF6LY/6LM+6bZD6LdD57lB57o+57w+57s957g55rYy5rgy5rgx5rox5b805cQ55cM35cI05b4v5rwu5b8x5cQ15cU25ck85cs/5c5F5c5F5tFO5dFP5dJQ5NBM5NBL485H485F48tB48k/4sU648Q448U648hB48lC48lB48g/48tF48xG48xG48tE48pD48Y94sY54cIw4cEt4b4p4Lsl4Lgi4Lkh4Lcg4Lch4bci4bol4cAr4MUw4ccz4ck54co74ss+4sk+48xE481H5NFM5NJO5NRT5dRV5dRX5dJU5tFW5c9T5s5V5stQ5sxU58tU5spS5sNH5sNK579G6L9K6L1L6b5O6L5M6MBN6MNR6chZ6cha6cha6cZZ6cdc6cle6sxj6stk68to7Mhm7Mdn7MZn7cZn7cVm7chp7Mho7Mtr7Mxr7M5u7M1t7NF07NBy7NFz7Mxt7c1w7ctw7cpw7chu7sdt7cds7cNl7L5e7L5d7L5f7cBj7rxh7rth7bpf7blf7rZe7rZe7rNd7rRe7rNd7rNd7bBa7K5X6qtU6qxV6apT6KpU6KlU6KpY6KhZ6ada6KRZ6aZb56Ja5J1X45pT4ptT35hQ3JZO2I9H04tCzYM7yX42x3UsxHAnwGYgu1oZtEsR';   // 256 rows x RGB
+  var SAT_RING = '////AP///wD///8A////AP///wD///8A////AA4MLg0ODC4NIxU0KSEVNCogEDIoIio4RConNzovLzk3LSk7WiwqOlY1LzxWOi08WDcvPFQ2Mz9mOi07WTcuP284MD9oOThBbjgwPl87NkFuQTVHmTk3QW46KD1nPz1LqDYzPVcxPEOQNTI/ZTswQXU/QUidRjhJpkk3QntEQEeNUEtMoWBTVcRkYF7PY15by2hgXNBoYF7RY15dzmleXtNkXV3QaWBe1mhfXtNpYGLYbmNk3WxnY9mAgHPxeXx99X50bex2enHubm1k34R+ePB4eXTvhXR+9oNtavF0Z13lgXlv7n5zbO2He2/zgXZq74h8cvOIfXHzgnVt74p/efKLhXz0f3Zv7HVrZON6cWbpfHhq7H53beuHennycW9h43VyZeZ+dm7qfHVw6YmAffOPior5c2xw7FdTU7c2QjRrOTZBbjMyPEQ0LzxEPkFEhklIUr4/QEePSElOq1dWV8VfXF/WYFtd0lpWWcpZVVW/WlZSrldUUrNcVlG0WVdRr1dUUrJZU1KyWVNSsllXUa9aVVGuWlNRr1taUbhZVVKwXFhUuV9aWchaVFKwJDAwHF5bWcZdWVnIXFlazF1fWspYW1vSERMwHw4NMRIQDzkAEA85BxAPOQcQDzkHEA42CRAPOQQ=';   // 128 radial samples x RGBA
+  var satBodyBytes = null, satRingBytes = null;
+  function satInit() {
+    if (satBodyBytes) return;
+    var b1 = atob(SAT_BODY);
+    satBodyBytes = new Uint8Array(b1.length);
+    for (var s1 = 0; s1 < b1.length; s1++) satBodyBytes[s1] = b1.charCodeAt(s1);
+    var b2 = atob(SAT_RING);
+    satRingBytes = new Uint8Array(b2.length);
+    for (var s2 = 0; s2 < b2.length; s2++) satRingBytes[s2] = b2.charCodeAt(s2);
+  }
+
   // ---------- shape generators ----------
   var GEN = {
     sphere: function (t, n, sh, ti, ex) {
@@ -611,7 +626,7 @@
         if (Math.random() < 0.035) {
           // atmosphere shell: a thin veil above the surface, colored in the shader
           var da = randDir();
-          var ra = 1.008 + Math.pow(Math.random(), 1.5) * 0.05;
+          var ra = 1.004 + Math.pow(Math.random(), 2.0) * 0.035;
           t[i*3] = da[0]*ra; t[i*3+1] = da[1]*ra; t[i*3+2] = da[2]*ra;
           n[i*3] = da[0]; n[i*3+1] = da[1]; n[i*3+2] = da[2];
           sh[i] = 0.55;
@@ -835,41 +850,41 @@
       }
     },
     saturn: function (t, n, sh, ti, ex) {
-      // banded gas giant with a particle ring system (Cassini division, ringlets),
-      // the ring plane baked at a stylish tilt
+      // real NASA textures: per-latitude body colors and the radial ring
+      // profile (C ring, bright B, Cassini division, A ring, faint F)
+      satInit();
       var TILT = 0.32, ct0 = Math.cos(TILT), st0 = Math.sin(TILT);
       for (var i = 0; i < N; i++) {
         var px, py, pz, nx, ny, nz, cr, cg, cb, shv;
         if (Math.random() < 0.30) {
-          // rings: uniform-by-area annulus 0.95..1.55
-          var rr = Math.sqrt(0.9025 + Math.random() * (2.4025 - 0.9025));
+          // rings: uniform-by-area annulus 0.95..1.58, look up the texture profile
+          var rr = Math.sqrt(0.9025 + Math.random() * (2.4964 - 0.9025));
           var th = Math.random() * 6.283;
-          var q = (rr - 0.95) / 0.6;
-          var b;
-          if (q < 0.14) b = 0.35;            // C ring, faint
-          else if (q < 0.52) b = 0.95;       // B ring, bright
-          else if (q < 0.60) b = 0.10;       // Cassini division
-          else if (q < 0.93) b = 0.68;       // A ring
-          else b = 0.30;                     // outer edge
-          b *= 0.75 + 0.25 * Math.sin(rr * 160.0);   // fine ringlets
+          var qi = Math.min(127, Math.floor((rr - 0.95) / 0.63 * 128));
+          var pa = satRingBytes[qi*4+3] / 255;
           px = Math.cos(th) * rr;
           pz = Math.sin(th) * rr;
           py = (Math.random() - 0.5) * 0.012;
           nx = 0; ny = 1; nz = 0;
-          shv = 0.25 + b * 1.1;
-          var g2 = 0.86 + Math.random() * 0.08;
-          cr = g2; cg = g2 * 0.92; cb = g2 * 0.72;
+          shv = (0.06 + pa * 1.45) * (0.9 + Math.random() * 0.2);
+          if (pa > 0.03) {
+            cr = satRingBytes[qi*4] / 255;
+            cg = satRingBytes[qi*4+1] / 255;
+            cb = satRingBytes[qi*4+2] / 255;
+          } else {
+            cr = 0.8; cg = 0.74; cb = 0.6;   // sparse dust in the gaps
+          }
         } else {
-          // slightly oblate banded body
+          // slightly oblate body, colors straight from the latitude strip
           var d = randDir();
           var r = (Math.random() < 0.9) ? 0.75 * (1 - Math.random() * 0.03) : 0.75 * Math.cbrt(Math.random());
           px = d[0] * r; py = d[1] * r * 0.9; pz = d[2] * r;
           nx = d[0]; ny = d[1]; nz = d[2];
-          var band2 = Math.sin(d[1] * 14.0) * 0.5 + Math.sin(d[1] * 31.0 + 1.7) * 0.3;
-          shv = 0.9 + band2 * 0.25;
-          cr = 0.93 + band2 * 0.05;
-          cg = 0.82 + band2 * 0.03;
-          cb = 0.60 - band2 * 0.05;
+          var row = Math.max(0, Math.min(255, Math.floor((0.5 - Math.asin(Math.max(-1, Math.min(1, d[1]))) / Math.PI) * 256)));
+          cr = satBodyBytes[row*3] / 255;
+          cg = satBodyBytes[row*3+1] / 255;
+          cb = satBodyBytes[row*3+2] / 255;
+          shv = 0.95 + (Math.random() - 0.5) * 0.18;
         }
         var tx2 = px * ct0 - py * st0;
         var ty2 = px * st0 + py * ct0;
@@ -926,7 +941,7 @@
       var ys = -x * st0 + y * ct0;
       var body = Math.sqrt(xs*xs + (ys*1.11)*(ys*1.11) + z*z) - 0.75;
       var rr = Math.sqrt(xs*xs + z*z);
-      var rc = Math.max(0.95, Math.min(1.55, rr));
+      var rc = Math.max(0.95, Math.min(1.58, rr));
       var ring = Math.sqrt((rr - rc)*(rr - rc) + ys*ys) - 0.02;
       return Math.min(body, ring);
     },
