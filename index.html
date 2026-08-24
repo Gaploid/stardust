@@ -266,9 +266,9 @@
   <button id="adv-toggle"><span class="ic">⚙️</span>advanced</button>
   <div id="adv-panel" hidden>
     <label>particle size <input type="range" id="set-size" min="0.15" max="1.5" step="0.05" value="0.35"><span id="val-size">0.35</span></label>
+    <label>opacity <input type="range" id="set-alpha" min="10" max="300" step="5" value="100"><span id="val-alpha">100%</span></label>
     <label>hand size <input type="range" id="set-hand" min="0.06" max="1.25" step="0.01" value="0.19"><span id="val-hand">0.19</span></label>
     <label>particles <input type="range" id="set-count" min="20000" max="10000000" step="20000" value="1000000"><span id="val-count">1M</span></label>
-    <label>focus <input type="range" id="set-fov" min="0" max="100" step="1" value="13"><span id="val-fov">13%</span></label>
     <label>sea floor <input type="checkbox" id="set-floor" checked><span id="val-floor">on</span></label>
     <label>city lights <input type="checkbox" id="set-city" checked><span id="val-city">on</span></label>
     <label>atmosphere <input type="checkbox" id="set-atmo" checked><span id="val-atmo">on</span></label>
@@ -370,8 +370,10 @@
 
   var RIPPLES = 16;   // how many waves live at once
 
-  // advanced settings: particle size, hand size, particle count, focus, sea floor
-  var SET = { size: 0.35, hand: 0.19, count: 1000000, focus: 0.13, floor: true,
+  // advanced settings: particle size, opacity, hand size, particle count, sea floor
+  // focus has no slider — the focal plane sits just in front of the shape and
+  // the depth of field reads as a soft near edge rather than as an effect
+  var SET = { size: 0.35, alpha: 1, hand: 0.19, count: 1000000, focus: 0.13, floor: true,
               trails: false, stars: false, city: true, atmo: true, vsync: true };
   var fovF = 2.5;     // fixed 30mm-equivalent framing
   var isCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
@@ -1661,8 +1663,10 @@
     var v = parseFloat(countEl.value);
     if (v > N) growWorld(v);
   });
-  bindSlider('set-fov', 'val-fov', function (v) {
-    SET.focus = v / 100;   // focal plane position inside the object
+  // a multiplier over the mode's own alpha, so switching modes still lands
+  // where it should — 100% is whatever water, particles or fog asked for
+  bindSlider('set-alpha', 'val-alpha', function (v) {
+    SET.alpha = v / 100;
   }, function (v) { return v + '%'; });
   if (isCoarse) {
     // reflect the lighter mobile default in the panel
@@ -1701,7 +1705,7 @@
       'fps ' + Math.round(1000 / avg) + '  ·  frame ' + avg.toFixed(1) + ' ms  (min ' + mn.toFixed(1) + ' / max ' + mx.toFixed(1) + ')\n' +
       'js ' + dbgJs.toFixed(2) + ' ms/frame  ·  ' + (SET.vsync ? 'vsync' : 'uncapped') + '\n' +
       'particles ' + fmt(drawCount) + ' / ' + fmt(N) + '  ·  ' + fmt(N * VBYTES / 1024 / 1024 | 0) + ' MB vertex buffers\n' +
-      'canvas ' + canvas.width + 'x' + canvas.height + ' @' + dpr.toFixed(2) + '  ·  focus ' + Math.round(SET.focus * 100) + '%\n' +
+      'canvas ' + canvas.width + 'x' + canvas.height + ' @' + dpr.toFixed(2) + '  ·  opacity ' + Math.round(SET.alpha * 100) + '%\n' +
       'shape ' + shape + '  ·  mode ' + mode + '  ·  phase ' + phaseNames[phase] + '\n' +
       'touch ' + (dbgLive ? 'active' : 'idle') + '  ·  waves alive ' + dbgLive + '/' + RIPPLES + '  ·  repulse ' + repulse.toFixed(3) + '\n' +
       'gen job ' + (genJob ? Math.round(genJob.i / N * 100) + '% ' + genJob.name : 'none') + '\n' +
@@ -1889,7 +1893,7 @@
     // density: the count slider now changes detail, not exposure — and the auto
     // quality drop stops dimming the image on its way down.
     var expo = Math.min(700000 / drawCount, 2.5);
-    gl.uniform1f(U.uAlpha, cur.alpha * fadeA * expo);   // trails accumulate — compensate too
+    gl.uniform1f(U.uAlpha, cur.alpha * fadeA * expo * SET.alpha);   // trails accumulate — compensate too
     gl.uniform3f(U.uPal0, cur.pal[0][0], cur.pal[0][1], cur.pal[0][2]);
     gl.uniform3f(U.uPal1, cur.pal[1][0], cur.pal[1][1], cur.pal[1][2]);
     gl.uniform3f(U.uPal2, cur.pal[2][0], cur.pal[2][1], cur.pal[2][2]);
