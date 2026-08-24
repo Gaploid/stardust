@@ -640,7 +640,10 @@
     '  lum *= mix(1.0, mix(0.8, 0.16, puffSel), uPuff);',
     '  vCol = col * lum * tw;',
     '  float pMul = mix(1.0, mix(0.55, 6.0, puffSel), uPuff);',
-    '  float maxPx = mix(4.0 * uSizeMul, 64.0, uPuff);',
+    // a backstop against a pathological point, not a working limit: at 4x it
+    // used to bind from two thirds of the size slider on, and everything past
+    // that only got blurrier
+    '  float maxPx = mix(12.0 * uSizeMul, 64.0, uPuff);',
     '  float spanPx = aSeed.y * uSizeMul * pMul / w;',
     '  float sizePx = clamp(spanPx * uPxScale, 0.6, maxPx);',
     // Exposure is area, not count: a point twice as wide throws four times the
@@ -1482,7 +1485,9 @@
   var dpr = Math.min(window.devicePixelRatio || 1, 1.75);
   var SIZE_REF = 0.35;                        // exposure anchor, not the default:
                                               // size changes grain, never brightness
-  var aspect = 1, pxScale = 1, pxRef = 1, yOff = 0;
+  var DOF_REF = 0.25;                         // the blur circle is a property of the
+                                              // lens: it must not follow the size slider
+  var aspect = 1, pxScale = 1, pxRef = 1, pxDof = 1, yOff = 0;
   function resize() {
     var w = Math.floor(canvas.clientWidth * dpr);
     var h = Math.floor(canvas.clientHeight * dpr);
@@ -1495,6 +1500,7 @@
     yOff = aspect < 0.8 ? -0.17 : 0;
     pxScale = fovF * 0.0075 * h * 0.5 * SET.size;
     pxRef = fovF * 0.0075 * h * 0.5 * SIZE_REF;
+    pxDof = fovF * 0.0075 * h * 0.5 * DOF_REF;
   }
   window.addEventListener('resize', resize);
   resize();
@@ -2047,7 +2053,7 @@
     gl.uniform3f(U.uMoveVel, mvx, mvy, mvz);
     gl.uniform1f(U.uFovF, fovF);
     gl.uniform1f(U.uHand, SET.hand);
-    gl.uniform1f(U.uDofPx, pxScale * 2.2);
+    gl.uniform1f(U.uDofPx, pxDof * 2.2);   // fixed circle: bigger points, not blurrier ones
     gl.uniform1f(U.uFocusW, dist - 1.15 + SET.focus * 2.3);
     sunAmt += ((shape === 'sun' ? 1 : 0) - sunAmt) * (1 - Math.exp(-2.5 * dt));
     gl.uniform1f(U.uSun, sunAmt);
