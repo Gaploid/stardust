@@ -9,6 +9,15 @@
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>&#x2728;</text></svg>">
 <title>Stardust</title>
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-D6MYRP35BY"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-D6MYRP35BY');
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -258,7 +267,7 @@
   <div id="adv-panel" hidden>
     <label>particle size <input type="range" id="set-size" min="0.15" max="1.5" step="0.05" value="0.35"><span id="val-size">0.35</span></label>
     <label>hand size <input type="range" id="set-hand" min="0.06" max="1.25" step="0.01" value="0.19"><span id="val-hand">0.19</span></label>
-    <label>particles <input type="range" id="set-count" min="20000" max="2000000" step="20000" value="700000"><span id="val-count">700k</span></label>
+    <label>particles <input type="range" id="set-count" min="20000" max="2000000" step="20000" value="1000000"><span id="val-count">1000k</span></label>
     <label>focus <input type="range" id="set-fov" min="0" max="100" step="1" value="13"><span id="val-fov">13%</span></label>
     <label>sea floor <input type="checkbox" id="set-floor" checked><span id="val-floor">on</span></label>
     <label>city lights <input type="checkbox" id="set-city" checked><span id="val-city">on</span></label>
@@ -271,7 +280,7 @@
 </div>
 </div>
 <div class="hud" id="hud-debug" hidden></div>
-<div class="hud" id="hud-help">hover — touch &nbsp;·&nbsp; drag — rotate &nbsp;·&nbsp; click — scatter &nbsp;·&nbsp; wheel — zoom</div>
+<div class="hud" id="hud-help">hover — touch &nbsp;·&nbsp; drag — rotate &nbsp;·&nbsp; space — scatter &nbsp;·&nbsp; wheel — zoom</div>
 <div class="hud" id="hud-stat"><span id="hud-phase">forming</span><br><span id="hud-fps"></span></div>
 <div id="fallback">WebGL is not available in this browser —<br>the animation cannot be shown.</div>
 <div id="loader">
@@ -358,7 +367,7 @@
   var RIPPLES = 16;   // how many waves live at once
 
   // advanced settings: particle size, hand size, particle count, focus, sea floor
-  var SET = { size: 0.35, hand: 0.19, count: 700000, focus: 0.13, floor: true,
+  var SET = { size: 0.35, hand: 0.19, count: 1000000, focus: 0.13, floor: true,
               trails: false, stars: false, city: true, atmo: true, vsync: true };
   var fovF = 2.5;     // fixed 30mm-equivalent framing
   var isCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
@@ -1449,7 +1458,7 @@
   }
 
   // ---------- interaction ----------
-  var dragging = false, moved = 0, lastX = 0, lastY = 0;
+  var dragging = false, lastX = 0, lastY = 0;
   var lastSpawnX = -1e9, lastSpawnY = -1e9;
   var lastEvX = 0, lastEvY = 0;                 // previous event position — for true speed
   var activePtrs = {};                          // pointerId -> [x, y]
@@ -1481,13 +1490,13 @@
     canvas.setPointerCapture(ev.pointerId);
     activePtrs[ev.pointerId] = [ev.clientX, ev.clientY];
     if (Object.keys(activePtrs).length === 2) {
-      // second finger: pinch zoom — no rotation, no tap-scatter
+      // second finger: pinch zoom — no rotation
       pinch = { gap0: ptrGap(), dist0: dist };
-      dragging = false; moved = 100;
+      dragging = false;
       canvas.classList.remove('dragging');
       return;
     }
-    dragging = true; moved = 0;
+    dragging = true;
     lastX = ev.clientX; lastY = ev.clientY;
     updateMouse(ev);
     canvas.classList.add('dragging');
@@ -1517,7 +1526,6 @@
     }
     if (!dragging) return;
     var dx = ev.clientX - lastX, dy = ev.clientY - lastY;
-    moved += Math.abs(dx) + Math.abs(dy);
     lastX = ev.clientX; lastY = ev.clientY;
     yawVel = dx * 0.005;
     pitchVel = dy * 0.005;
@@ -1525,7 +1533,6 @@
     pitch = Math.max(-1.25, Math.min(1.25, pitch));
   });
   function endDrag() {
-    if (dragging && moved < 6) pulse();   // that was a click, not a drag
     dragging = false;
     canvas.classList.remove('dragging');
   }
@@ -1659,7 +1666,7 @@
 
   function pulse() {
     if (reducedMotion) return;
-    // a click only scatters; the shape reassembles on its own
+    // space scatters; the shape reassembles on its own
     if (phase === PH_HOLD || phase === PH_ASSEMBLE) { phase = PH_DISPERSE; phaseT = (1 - assemble) * DUR[PH_DISPERSE]; }
   }
 
@@ -1817,7 +1824,12 @@
     gl.uniform1f(U.uAspect, aspect);
     gl.uniform1f(U.uPxScale, pxScale);
     gl.uniform1f(U.uTwinkle, reducedMotion ? 0 : cur.twinkle);
-    gl.uniform1f(U.uAlpha, cur.alpha * fadeA);   // trails accumulate — compensate exposure
+    // additive blending makes brightness scale with the particle count, so a
+    // denser cloud blows the bright areas out. Normalize against the reference
+    // density: the count slider now changes detail, not exposure — and the auto
+    // quality drop stops dimming the image on its way down.
+    var expo = Math.min(700000 / drawCount, 2.5);
+    gl.uniform1f(U.uAlpha, cur.alpha * fadeA * expo);   // trails accumulate — compensate too
     gl.uniform3f(U.uPal0, cur.pal[0][0], cur.pal[0][1], cur.pal[0][2]);
     gl.uniform3f(U.uPal1, cur.pal[1][0], cur.pal[1][1], cur.pal[1][2]);
     gl.uniform3f(U.uPal2, cur.pal[2][0], cur.pal[2][1], cur.pal[2][2]);

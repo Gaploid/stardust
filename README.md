@@ -20,7 +20,7 @@ Saturn, a cube, or a torus — and you can stir them with your cursor.
   depth-of-field focus slider, and toggles for sea floor, city lights,
   atmosphere, trails, and starfield.
 
-Drag rotates · click (or Space) scatters · wheel zooms.
+Drag rotates · Space scatters · wheel zooms.
 
 ## Data sources
 
