@@ -265,6 +265,7 @@
     'uniform float uDofPx;',        // depth-of-field strength (max blur circle, px)
     'uniform float uFocusW;',       // view depth of the focal plane (slides through the object)
     'uniform float uSun;',          // 1 when the sun is active: self-luminous boiling plasma
+    'uniform float uYOff;',         // vertical NDC shift: keeps the shape clear of the mobile menu
     'varying vec3 vCol;',
     'varying float vSoft;',         // extra per-particle softness from defocus
     'float hash(float n){ return fract(sin(n)*43758.5453123); }',
@@ -335,7 +336,7 @@
     '  disp += turb * min(glow, 1.2) * uTurb * 0.09;',
     '  p += disp;',
     '  float w = uDist - p.z;',
-    '  gl_Position = vec4(p.x*uFovF/uAspect, p.y*uFovF, 0.0, w);',
+    '  gl_Position = vec4(p.x*uFovF/uAspect, p.y*uFovF + uYOff*w, 0.0, w);',
     // lighting from the assembled shape normal
     '  vec3 L = normalize(vec3(-0.45, 0.65, 0.62));',
     '  float hl = dot(n, L)*0.5 + 0.5;',
@@ -431,7 +432,7 @@
   var U = {};
   ['uRot','uScatRot','uTime','uAssemble','uDist','uAspect','uPxScale','uTwinkle','uAlpha','uRepulse',
    'uPal0','uPal1','uPal2','uPal3','uSwellAmp','uLift','uPush','uRipSpeed','uRipWidth','uSpread','uSizeMul',
-   'uSoft','uPuff','uSwirl','uTurb','uDrag','uSpec','uMoveVel','uCursorPos','uFovF','uHand','uDofPx','uFocusW','uSun'].forEach(function (n) {
+   'uSoft','uPuff','uSwirl','uTurb','uDrag','uSpec','uMoveVel','uCursorPos','uFovF','uHand','uDofPx','uFocusW','uSun','uYOff'].forEach(function (n) {
     U[n] = gl.getUniformLocation(prog, n);
   });
   U.uRipples = gl.getUniformLocation(prog, 'uRipples[0]');
@@ -920,7 +921,7 @@
   }
 
   var dpr = Math.min(window.devicePixelRatio || 1, 1.75);
-  var aspect = 1, pxScale = 1;
+  var aspect = 1, pxScale = 1, yOff = 0;
   function resize() {
     var w = Math.floor(canvas.clientWidth * dpr);
     var h = Math.floor(canvas.clientHeight * dpr);
@@ -929,6 +930,8 @@
     }
     gl.viewport(0, 0, w, h);
     aspect = w / h;
+    // portrait phones: push the shape below the menu block
+    yOff = aspect < 0.8 ? -0.17 : 0;
     pxScale = fovF * 0.0075 * h * 0.5 * SET.size;
   }
   window.addEventListener('resize', resize);
@@ -942,7 +945,7 @@
   var scatSeed = { pitch: 0.4, yaw: 1.3 };
   var yaw = -0.6, pitch = 0.32;
   var yawVel = 0, pitchVel = 0;
-  var dist = 3.4;
+  var dist = isCoarse ? 4.0 : 3.4;   // phones start a bit farther out
   var phaseNames = ['forming', 'spinning', 'scattering', 'cloud'];
 
   function newScatterOrientation() {
@@ -1000,7 +1003,7 @@
   function rayFromNdc() {
     // camera at (0,0,dist) looking down -z; the model rotates, the camera does not
     var rx = mouseNdc.x * aspect / fovF;
-    var ry = mouseNdc.y / fovF;
+    var ry = (mouseNdc.y - yOff) / fovF;   // compensate the mobile vertical shift
     var len = Math.sqrt(rx*rx + ry*ry + 1);
     return [rx/len, ry/len, -1/len];
   }
@@ -1375,6 +1378,7 @@
     gl.uniform1f(U.uFocusW, dist - 1.15 + SET.focus * 2.3);
     sunAmt += ((shape === 'sun' ? 1 : 0) - sunAmt) * (1 - Math.exp(-2.5 * dt));
     gl.uniform1f(U.uSun, sunAmt);
+    gl.uniform1f(U.uYOff, yOff);
     gl.uniform3f(U.uCursorPos, cursorSm[0], cursorSm[1], cursorSm[2]);
     gl.uniform1f(U.uRepulse, hasMouse ? repulse : repulse * 0.3);
     gl.uniform4fv(U.uRipples, rippleBuf);
