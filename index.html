@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Up to 2 million WebGL particles assemble into the Sun, Earth, the Moon, a cube, a torus, or a sphere. Water, particle, and fog modes; stir the surface with your cursor. Real NASA and NOAA maps.">
+<meta name="description" content="Up to 2 million WebGL particles assemble into the Sun, Earth, the Moon, Saturn, a cube, or a torus. Water, particle, and fog modes; stir the surface with your cursor. Real NASA and NOAA maps.">
 <meta property="og:title" content="Stardust">
 <meta property="og:description" content="2M WebGL particles form planets you can stir with your cursor.">
 <meta property="og:type" content="website">
@@ -179,9 +179,9 @@
   <button data-shape="earth" class="on"><span class="ic">🌍</span>earth</button>
   <button data-shape="moon"><span class="ic">🌙</span>moon</button>
   <button data-shape="sun"><span class="ic">☀️</span>sun</button>
+  <button data-shape="saturn"><span class="ic">🪐</span>saturn</button>
   <button data-shape="cube"><span class="ic">🧊</span>cube</button>
   <button data-shape="torus"><span class="ic">🍩</span>torus</button>
-  <button data-shape="sphere"><span class="ic">⚪</span>sphere</button>
 </div>
 <div id="hud-adv">
   <button id="adv-toggle"><span class="ic">⚙️</span>advanced</button>
@@ -192,8 +192,9 @@
     <label>focus <input type="range" id="set-fov" min="0" max="100" step="1" value="13"><span id="val-fov">13%</span></label>
     <label>sea floor <input type="checkbox" id="set-floor" checked><span id="val-floor">on</span></label>
     <label>city lights <input type="checkbox" id="set-city" checked><span id="val-city">on</span></label>
-    <label>trails <input type="checkbox" id="set-trails" checked><span id="val-trails">on</span></label>
-    <label>stars <input type="checkbox" id="set-stars" checked><span id="val-stars">on</span></label>
+    <label>atmosphere <input type="checkbox" id="set-atmo" checked><span id="val-atmo">on</span></label>
+    <label>trails <input type="checkbox" id="set-trails"><span id="val-trails">off</span></label>
+    <label>stars <input type="checkbox" id="set-stars"><span id="val-stars">off</span></label>
   </div>
 </div>
 </div>
@@ -219,7 +220,7 @@
 
   // advanced settings: particle size, hand size, particle count, focus, sea floor
   var SET = { size: 0.35, hand: 0.19, count: 700000, focus: 0.13, floor: true,
-              trails: true, stars: true, city: true };
+              trails: false, stars: false, city: true, atmo: true };
   var fovF = 2.5;     // fixed 30mm-equivalent framing
   var isCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
   if (isCoarse) SET.count = 300000;   // phone GPUs: start lighter, still adjustable
@@ -271,6 +272,7 @@
     'uniform float uSun;',          // 1 when the sun is active: self-luminous boiling plasma
     'uniform float uYOff;',         // vertical NDC shift: keeps the shape clear of the mobile menu
     'uniform float uCity;',         // city lights amount (earth only)
+    'uniform float uAtmo;',         // atmosphere shell amount (earth only)
     'varying vec3 vCol;',
     'varying float vSoft;',         // extra per-particle softness from defocus
     'float hash(float n){ return fract(sin(n)*43758.5453123); }',
@@ -368,6 +370,12 @@
     '  float night = smoothstep(0.08, -0.3, dot(n, L));',
     '  float city = max(aExtra, 0.0) * night * uCity * e;',
     '  lum += city * 2.4;',
+    // atmosphere shell: brightest at the limb, lit on the day side
+    '  float atmo = step(aExtra, -0.5) * uAtmo;',
+    '  float dnl = hl * 2.0 - 1.0;',
+    '  lum = mix(lum, (0.15 + 0.85*hl) * (0.5 + 3.0*pow(1.0 - nv, 2.0)), atmo * e);',
+    // shell particles (atmosphere/corona) vanish while their effect is off
+    '  lum *= 1.0 - step(aExtra, -0.5) * (1.0 - max(uSun, uAtmo)) * e;',
     // depth fade: the far side is dimmer (softer for the glowing sun)
     '  float depth = clamp((p.z + 1.6) / 3.2, 0.0, 1.0);',
     '  lum *= mix(0.4 + 0.6*depth, 0.85 + 0.15*depth, uSun);',
@@ -386,19 +394,22 @@
     '  col = mix(col, aTint.rgb, aTint.w * e);',
     // sodium-lamp gold for the city glow
     '  col = mix(col, vec3(1.0, 0.78, 0.45), min(1.0, city * 2.0));',
+    // atmosphere: airy blue, warming to a sunset band along the terminator
+    '  float sband = exp(-dnl*dnl*40.0);',
+    '  col = mix(col, mix(vec3(0.45, 0.72, 1.0), vec3(1.0, 0.55, 0.3), sband * 0.8), atmo);',
     // in fog ~14% of particles become large soft puffs, the rest are dim dust
     '  float puffSel = step(fract(aSeed.x*7.91), 0.14);',
     '  lum *= mix(1.0, mix(0.8, 0.16, puffSel), uPuff);',
     '  vCol = col * lum * tw;',
     '  float pMul = mix(1.0, mix(0.55, 6.0, puffSel), uPuff);',
     '  float sizePx = clamp(aSeed.y * uPxScale * uSizeMul * pMul / w, 0.6, mix(4.0 * uSizeMul, 64.0, uPuff));',
-    '  sizePx *= 1.0 + prom * 0.8 + cor * 0.5;',   // plasma blobs are chunkier
+    '  sizePx *= 1.0 + prom * 0.8 + cor * 0.5 + atmo * 1.6;',   // plasma and air are chunkier
     // depth of field: away from the focal plane points blur into bokeh discs —
     // bigger, softer, dimmer (light spread over a larger area)
     '  float coc = uDofPx * abs(w - uFocusW) / w;',
     '  float blurred = sqrt(sizePx*sizePx + coc*coc);',
     '  vCol *= sizePx*sizePx / (blurred*blurred);',
-    '  vSoft = coc / (coc + 3.0);',
+    '  vSoft = max(coc / (coc + 3.0), atmo * 0.85);',
     '  gl_PointSize = min(blurred, 72.0);',
     '}'
   ].join('\n');
@@ -443,7 +454,7 @@
   var U = {};
   ['uRot','uScatRot','uTime','uAssemble','uDist','uAspect','uPxScale','uTwinkle','uAlpha','uRepulse',
    'uPal0','uPal1','uPal2','uPal3','uSwellAmp','uLift','uPush','uRipSpeed','uRipWidth','uSpread','uSizeMul',
-   'uSoft','uPuff','uSwirl','uTurb','uDrag','uSpec','uMoveVel','uCursorPos','uFovF','uHand','uDofPx','uFocusW','uSun','uYOff','uCity'].forEach(function (n) {
+   'uSoft','uPuff','uSwirl','uTurb','uDrag','uSpec','uMoveVel','uCursorPos','uFovF','uHand','uDofPx','uFocusW','uSun','uYOff','uCity','uAtmo'].forEach(function (n) {
     U[n] = gl.getUniformLocation(prog, n);
   });
   U.uRipples = gl.getUniformLocation(prog, 'uRipples[0]');
@@ -597,6 +608,17 @@
     },
     earth: function (t, n, sh, ti, ex) {
       for (var i = 0; i < N; i++) {
+        if (Math.random() < 0.035) {
+          // atmosphere shell: a thin veil above the surface, colored in the shader
+          var da = randDir();
+          var ra = 1.008 + Math.pow(Math.random(), 1.5) * 0.05;
+          t[i*3] = da[0]*ra; t[i*3+1] = da[1]*ra; t[i*3+2] = da[2]*ra;
+          n[i*3] = da[0]; n[i*3+1] = da[1]; n[i*3+2] = da[2];
+          sh[i] = 0.55;
+          ti[i*4+3] = 0;
+          ex[i] = -1;
+          continue;
+        }
         var d = randDir();
         var lat = Math.asin(Math.max(-1, Math.min(1, d[1]))) * 57.29578 + (Math.random() - 0.5) * 0.8;
         var lon = -Math.atan2(d[2], d[0]) * 57.29578 + (Math.random() - 0.5) * 0.8;
@@ -812,6 +834,56 @@
         }
       }
     },
+    saturn: function (t, n, sh, ti, ex) {
+      // banded gas giant with a particle ring system (Cassini division, ringlets),
+      // the ring plane baked at a stylish tilt
+      var TILT = 0.32, ct0 = Math.cos(TILT), st0 = Math.sin(TILT);
+      for (var i = 0; i < N; i++) {
+        var px, py, pz, nx, ny, nz, cr, cg, cb, shv;
+        if (Math.random() < 0.30) {
+          // rings: uniform-by-area annulus 0.95..1.55
+          var rr = Math.sqrt(0.9025 + Math.random() * (2.4025 - 0.9025));
+          var th = Math.random() * 6.283;
+          var q = (rr - 0.95) / 0.6;
+          var b;
+          if (q < 0.14) b = 0.35;            // C ring, faint
+          else if (q < 0.52) b = 0.95;       // B ring, bright
+          else if (q < 0.60) b = 0.10;       // Cassini division
+          else if (q < 0.93) b = 0.68;       // A ring
+          else b = 0.30;                     // outer edge
+          b *= 0.75 + 0.25 * Math.sin(rr * 160.0);   // fine ringlets
+          px = Math.cos(th) * rr;
+          pz = Math.sin(th) * rr;
+          py = (Math.random() - 0.5) * 0.012;
+          nx = 0; ny = 1; nz = 0;
+          shv = 0.25 + b * 1.1;
+          var g2 = 0.86 + Math.random() * 0.08;
+          cr = g2; cg = g2 * 0.92; cb = g2 * 0.72;
+        } else {
+          // slightly oblate banded body
+          var d = randDir();
+          var r = (Math.random() < 0.9) ? 0.75 * (1 - Math.random() * 0.03) : 0.75 * Math.cbrt(Math.random());
+          px = d[0] * r; py = d[1] * r * 0.9; pz = d[2] * r;
+          nx = d[0]; ny = d[1]; nz = d[2];
+          var band2 = Math.sin(d[1] * 14.0) * 0.5 + Math.sin(d[1] * 31.0 + 1.7) * 0.3;
+          shv = 0.9 + band2 * 0.25;
+          cr = 0.93 + band2 * 0.05;
+          cg = 0.82 + band2 * 0.03;
+          cb = 0.60 - band2 * 0.05;
+        }
+        var tx2 = px * ct0 - py * st0;
+        var ty2 = px * st0 + py * ct0;
+        px = tx2; py = ty2;
+        var nx2 = nx * ct0 - ny * st0;
+        var ny2 = nx * st0 + ny * ct0;
+        nx = nx2; ny = ny2;
+        t[i*3] = px; t[i*3+1] = py; t[i*3+2] = pz;
+        n[i*3] = nx; n[i*3+1] = ny; n[i*3+2] = nz;
+        sh[i] = shv;
+        ti[i*4] = cr; ti[i*4+1] = cg; ti[i*4+2] = cb; ti[i*4+3] = 0.9;
+        ex[i] = 0;
+      }
+    },
     cube: function (t, n, sh, ti, ex) {
       var a = 0.8;
       for (var i = 0; i < N; i++) {
@@ -847,6 +919,17 @@
     earth:  function (x, y, z) { return Math.sqrt(x*x + y*y + z*z) - 1.0; },
     moon:   function (x, y, z) { return Math.sqrt(x*x + y*y + z*z) - 1.0; },
     sun:    function (x, y, z) { return Math.sqrt(x*x + y*y + z*z) - 1.0; },
+    saturn: function (x, y, z) {
+      // undo the baked tilt, then body + flat ring annulus
+      var ct0 = Math.cos(0.32), st0 = Math.sin(0.32);
+      var xs = x * ct0 + y * st0;
+      var ys = -x * st0 + y * ct0;
+      var body = Math.sqrt(xs*xs + (ys*1.11)*(ys*1.11) + z*z) - 0.75;
+      var rr = Math.sqrt(xs*xs + z*z);
+      var rc = Math.max(0.95, Math.min(1.55, rr));
+      var ring = Math.sqrt((rr - rc)*(rr - rc) + ys*ys) - 0.02;
+      return Math.min(body, ring);
+    },
     torus:  function (x, y, z) {
       var q = Math.sqrt(x*x + z*z) - 0.72;
       return Math.sqrt(q*q + y*y) - 0.34;
@@ -1300,6 +1383,7 @@
     });
   }
   bindToggle('set-city', 'val-city', 'city');
+  bindToggle('set-atmo', 'val-atmo', 'atmo');
   bindToggle('set-trails', 'val-trails', 'trails');
   bindToggle('set-stars', 'val-stars', 'stars');
   var floorToggle = document.getElementById('set-floor');
@@ -1341,7 +1425,7 @@
   var frameAcc = 0, frameN = 0, fpsShown = 0, hudTimer = 0;
   var degraded = false;
   var sunAmt = 0;    // eases to 1 while the sun is the active shape
-  var trailAmt = 0, starAmt = 0, cityAmtU = 0;   // eased toggles
+  var trailAmt = 0, starAmt = 0, cityAmtU = 0, atmoAmt = 0;   // eased toggles
 
   if (reducedMotion) { assemble = 1; phase = PH_HOLD; }
 
@@ -1430,6 +1514,7 @@
     trailAmt += ((SET.trails ? 1 : 0) - trailAmt) * mk;
     starAmt += ((SET.stars ? 1 : 0) - starAmt) * mk;
     cityAmtU += (((SET.city && shape === 'earth') ? 1 : 0) - cityAmtU) * mk;
+    atmoAmt += (((SET.atmo && shape === 'earth') ? 1 : 0) - atmoAmt) * mk;
     var fadeA = 1 - trailAmt * 0.75;
     gl.useProgram(bgProg);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -1485,6 +1570,7 @@
     gl.uniform1f(U.uSun, sunAmt);
     gl.uniform1f(U.uYOff, yOff);
     gl.uniform1f(U.uCity, cityAmtU);
+    gl.uniform1f(U.uAtmo, atmoAmt);
     gl.uniform3f(U.uCursorPos, cursorSm[0], cursorSm[1], cursorSm[2]);
     gl.uniform1f(U.uRepulse, hasMouse ? repulse : repulse * 0.3);
     gl.uniform4fv(U.uRipples, rippleBuf);
