@@ -1,5 +1,7 @@
 # Stardust
 
+<video src="https://github.com/Gaploid/stardust/raw/main/earth-dust-4.mp4" controls loop muted width="100%"></video>
+
 Up to **10 million WebGL particles** assemble into Earth, the Moon, Jupiter,
 Saturn, the Sun, or a cube — and you can stir them with your cursor.
 
