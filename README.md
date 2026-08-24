@@ -19,9 +19,10 @@ Saturn, the Sun, or a cube — and you can stir them with your cursor.
   *particles* (crisp film-grain points), *fog* (volumetric puffs).
 - **Cursor** — a touch bubble parts the near surface, rings ripple outward, the
   trail sheds vortices and drags the medium along.
-- **Advanced panel** — particle size, opacity, hand size, particle count
-  (20k–10M), and toggles for sea floor, city lights, atmosphere, trails, and
-  starfield.
+- **Advanced panel** — hand size, particle count (20k–10M), opacity, blur, and
+  toggles for sea floor, city lights, atmosphere, trails, and starfield. *Blur*
+  is the point size: at a million points, growing them reads as softening, so
+  the control is named for what it does.
 
 Drag rotates · Space scatters · wheel zooms.
 

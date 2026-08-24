@@ -332,10 +332,12 @@
 <div id="hud-adv">
   <button id="adv-toggle"><span class="ic">⚙️</span>advanced</button>
   <div id="adv-panel" hidden>
-    <label>particle size <input type="range" id="set-size" min="0.15" max="1.5" step="0.05" value="0.25"><span id="val-size">0.25</span></label>
-    <label>opacity <input type="range" id="set-alpha" min="10" max="300" step="5" value="115"><span id="val-alpha">115%</span></label>
-    <label>hand size <input type="range" id="set-hand" min="0.06" max="1.25" step="0.01" value="0.19"><span id="val-hand">0.19</span></label>
+    <label>hand <input type="range" id="set-hand" min="0.06" max="1.25" step="0.01" value="0.19"><span id="val-hand">0.19</span></label>
     <label>particles <input type="range" id="set-count" min="20000" max="10000000" step="20000" value="1000000"><span id="val-count">1M</span></label>
+    <label>opacity <input type="range" id="set-alpha" min="10" max="300" step="5" value="115"><span id="val-alpha">115%</span></label>
+    <!-- set-size really is the point size; at a million points growing them
+         reads as softening, so the control says what it does, not how it works -->
+    <label>blur <input type="range" id="set-size" min="0.15" max="1.5" step="0.05" value="0.25"><span id="val-size">0.25</span></label>
     <label>sea floor <input type="checkbox" id="set-floor" checked><span id="val-floor">on</span></label>
     <label>city lights <input type="checkbox" id="set-city" checked><span id="val-city">on</span></label>
     <label>atmosphere <input type="checkbox" id="set-atmo" checked><span id="val-atmo">on</span></label>
@@ -437,7 +439,7 @@
 
   var RIPPLES = 16;   // how many waves live at once
 
-  // advanced settings: particle size, opacity, hand size, particle count, sea floor
+  // advanced settings: hand, particle count, opacity, blur (point size), sea floor
   // focus has no slider — the focal plane sits just in front of the shape and
   // the depth of field reads as a soft near edge rather than as an effect
   var SET = { size: 0.25, alpha: 1.15, hand: 0.19, count: 1000000, focus: 0.13, floor: true,
