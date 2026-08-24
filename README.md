@@ -49,6 +49,11 @@ A single self-contained `index.html` (~450 KB) — no dependencies, no build ste
 One WebGL 1 point-sprite pass; all motion (assembly, waves, vortices, depth of
 field) is computed in the vertex shader.
 
+Exposure is normalized against both particle count and particle size. Additive
+blending makes on-screen brightness a product of coverage and density, so either
+slider would otherwise double as an exposure control and burn out the limb —
+where the sphere is edge-on and points pile up. They change grain instead.
+
 Vertex buffers are sized to the particle count the slider asks for and grow only
 when it is raised — 10M particles is 333 MB of VRAM, so it is opt-in. The CPU
 side stages one 25k chunk at a time, which keeps generation off the main thread

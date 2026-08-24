@@ -394,6 +394,7 @@
     'uniform float uDist;',
     'uniform float uAspect;',
     'uniform float uPxScale;',
+    'uniform float uPxRef;',        // uPxScale at the reference particle size
     'uniform float uTwinkle;',
     'uniform vec3 uCursorPos;',     // touch point on the near surface (world space)
     'uniform float uRepulse;',      // "hand through fog" strength, decays when idle
@@ -564,7 +565,17 @@
     '  lum *= mix(1.0, mix(0.8, 0.16, puffSel), uPuff);',
     '  vCol = col * lum * tw;',
     '  float pMul = mix(1.0, mix(0.55, 6.0, puffSel), uPuff);',
-    '  float sizePx = clamp(aSeed.y * uPxScale * uSizeMul * pMul / w, 0.6, mix(4.0 * uSizeMul, 64.0, uPuff));',
+    '  float maxPx = mix(4.0 * uSizeMul, 64.0, uPuff);',
+    '  float spanPx = aSeed.y * uSizeMul * pMul / w;',
+    '  float sizePx = clamp(spanPx * uPxScale, 0.6, maxPx);',
+    // Exposure is area, not count: a point twice as wide throws four times the
+    // light into the same pixel. That is why the size slider used to burn out
+    // the limb first — the sphere is edge-on there, so points already pile up.
+    // Dividing by the area this same point would cover at the reference size
+    // leaves the slider changing grain and nothing else. The clamps are inside
+    // the ratio on purpose: once a point stops growing, so does its share.
+    '  float refPx = clamp(spanPx * uPxRef, 0.6, maxPx);',
+    '  vCol *= refPx * refPx / (sizePx * sizePx);',
     '  sizePx *= 1.0 + prom * 0.8 + cor * 0.5 + atmo * 5.0;',   // air blurs into a veil
     // depth of field: away from the focal plane points blur into bokeh discs —
     // bigger, softer, dimmer (light spread over a larger area)
@@ -614,7 +625,7 @@
   gl.useProgram(prog);
 
   var U = {};
-  ['uRot','uScatRot','uTime','uAssemble','uDist','uAspect','uPxScale','uTwinkle','uAlpha','uRepulse',
+  ['uRot','uScatRot','uTime','uAssemble','uDist','uAspect','uPxScale','uPxRef','uTwinkle','uAlpha','uRepulse',
    'uPal0','uPal1','uPal2','uPal3','uSwellAmp','uLift','uPush','uRipSpeed','uRipWidth','uSpread','uSizeMul',
    'uSoft','uPuff','uSwirl','uTurb','uDrag','uSpec','uMoveVel','uCursorPos','uFovF','uHand','uDofPx','uFocusW','uSun','uYOff','uCity','uAtmo','uActive'].forEach(function (n) {
     U[n] = gl.getUniformLocation(prog, n);
@@ -1346,7 +1357,8 @@
   }
 
   var dpr = Math.min(window.devicePixelRatio || 1, 1.75);
-  var aspect = 1, pxScale = 1, yOff = 0;
+  var SIZE_REF = 0.35;                        // the particle size the look is tuned for
+  var aspect = 1, pxScale = 1, pxRef = 1, yOff = 0;
   function resize() {
     var w = Math.floor(canvas.clientWidth * dpr);
     var h = Math.floor(canvas.clientHeight * dpr);
@@ -1358,6 +1370,7 @@
     // portrait phones: push the shape below the menu block
     yOff = aspect < 0.8 ? -0.17 : 0;
     pxScale = fovF * 0.0075 * h * 0.5 * SET.size;
+    pxRef = fovF * 0.0075 * h * 0.5 * SIZE_REF;
   }
   window.addEventListener('resize', resize);
   resize();
@@ -1869,6 +1882,7 @@
     gl.uniform1f(U.uDist, dist);
     gl.uniform1f(U.uAspect, aspect);
     gl.uniform1f(U.uPxScale, pxScale);
+    gl.uniform1f(U.uPxRef, pxRef);
     gl.uniform1f(U.uTwinkle, reducedMotion ? 0 : cur.twinkle);
     // additive blending makes brightness scale with the particle count, so a
     // denser cloud blows the bright areas out. Normalize against the reference
