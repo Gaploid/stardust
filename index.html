@@ -616,8 +616,14 @@
     '  lum *= 1.0 + max(swell, 0.0) * uSwellAmp * 7.5 * e;',
     // disturbed particles light up (kept modest to avoid flicker)
     '  lum = lum * (1.0 + glow) + 0.2*glow;',
-    // film-grain twinkle
-    '  float tw = mix(1.0, 0.3 + 1.4*hash(aSeed.x*911.7 + floor(uTime*21.0)), uTwinkle);',
+    // Film-grain twinkle. Every point used to re-roll on the same beat, so the
+    // whole image changed brightness 21 times a second — against 60 fps that is
+    // a step every 2.86 frames, and the beat read as the animation stuttering
+    // wherever the eye was tracking motion. A per-point phase spreads the
+    // re-rolls evenly through the interval: each point still pops between
+    // discrete levels, the frame as a whole no longer does.
+    '  float tws = uTime*21.0 + fract(aSeed.x*17.31);',
+    '  float tw = mix(1.0, 0.3 + 1.4*hash(aSeed.x*911.7 + floor(tws)), uTwinkle);',
     // color from the mode palette; slightly diluted toward white for shimmer
     '  float cs = fract(aSeed.x*13.73);',
     '  vec3 base = cs < 0.5 ? uPal0 : (cs < 0.78 ? uPal1 : (cs < 0.92 ? uPal2 : uPal3));',
