@@ -1,17 +1,18 @@
 # Stardust
 
-Up to **10 million WebGL particles** assemble into the Sun, Earth, the Moon,
-Saturn, a cube, or a torus — and you can stir them with your cursor.
+Up to **10 million WebGL particles** assemble into Earth, the Moon, Jupiter,
+Saturn, the Sun, or a cube — and you can stir them with your cursor.
 
 **Live: https://gaploid.github.io/stardust/**
 
 ## What it does
 
 - **Shapes** — Earth (real coastlines, city lights, ETOPO1 sea floor), the Moon
-  (real LROC albedo and mineral color), the Sun (procedural, modeled on SDO
-  imagery: filaments, fire seas, prominence loops), Saturn (real body and ring
-  textures, incl. the Cassini division), plus cube and torus. Switching scatters
-  the particles into a cloud and reassembles them.
+  (real LROC albedo and mineral color), Jupiter (Cassini's cylindrical map, read
+  back in enhanced colour), Saturn (real body and ring textures, incl. the
+  Cassini division), the Sun (procedural, modeled on SDO imagery: filaments,
+  fire seas, prominence loops), plus a cube. Switching scatters the particles
+  into a cloud and reassembles them.
 - **Render modes** — *water* (liquid surface with swell and specular glints),
   *particles* (crisp film-grain points), *fog* (volumetric puffs).
 - **Cursor** — a touch bubble parts the near surface, rings ripple outward, the
@@ -37,17 +38,26 @@ The same list is in the page itself, behind **credits** in the top-right corner.
 | Sea-floor height | NOAA NCEI ETOPO1 bathymetry | 512×256, 4 bit/cell | 64 KB |
 | Lunar albedo | NASA/GSFC/ASU LROC mosaic | 512×256, 4 bit/cell | 64 KB |
 | Lunar color warmth | NASA/GSFC/ASU LROC mosaic | 512×256, 4 bit/cell | 64 KB |
+| Jupiter clouds | NASA/JPL/SSI Cassini cylindrical map (PIA07782) | 512×256, 4 bit/cell | 64 KB |
+| Jupiter chroma | same map, red minus blue | 256×128, 4 bit/cell | 16 KB |
+| Jupiter bands | same map, averaged along each latitude | 256 latitudes × RGB | 768 B |
 | Saturn body | NASA Cassini-derived texture | 256 latitudes × RGB | 768 B |
 | Saturn rings | NASA Cassini-derived texture | 128 radial samples × RGBA | 512 B |
 
 The Sun uses no map — it is generated procedurally.
 
+Jupiter is split into three layers rather than one colour map: brightness
+carries the belts, the ovals and the Great Red Spot and needs the resolution,
+while chroma varies far more slowly and rides at a quarter of it. Full colour at
+512×256 would have cost 128 KB of base64 instead of 81 KB.
+
 Imagery courtesy of NASA Earth Observatory, NASA/GSFC/Arizona State University
-(LROC), NASA/JPL-Caltech, and NOAA NCEI. Public domain / free to use with credit.
+(LROC), NASA/JPL-Caltech, NASA/JPL/Space Science Institute, and NOAA NCEI.
+Public domain / free to use with credit.
 
 ## Tech
 
-A single self-contained `index.html` (~450 KB) — no dependencies, no build step.
+A single self-contained `index.html` (~570 KB) — no dependencies, no build step.
 One WebGL 1 point-sprite pass; all motion (assembly, waves, vortices, depth of
 field) is computed in the vertex shader.
 
