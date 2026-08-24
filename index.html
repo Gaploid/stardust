@@ -266,10 +266,8 @@
     <label>trails <input type="checkbox" id="set-trails"><span id="val-trails">off</span></label>
     <label>stars <input type="checkbox" id="set-stars"><span id="val-stars">off</span></label>
     <label>vsync <input type="checkbox" id="set-vsync" checked><span id="val-vsync">on</span></label>
+    <label>debug <input type="checkbox" id="set-debug"><span id="val-debug">off</span></label>
   </div>
-</div>
-<div id="hud-dbg">
-  <button id="dbg-toggle"><span class="ic">🐞</span>debug</button>
 </div>
 </div>
 <div class="hud" id="hud-debug" hidden></div>
@@ -1618,11 +1616,10 @@
 
   // ---------- debug window ----------
   var dbgPanel = document.getElementById('hud-debug');
-  var dbgToggle = document.getElementById('dbg-toggle');
-  dbgToggle.addEventListener('click', function () {
-    var open = dbgPanel.hidden;
-    dbgPanel.hidden = !open;
-    dbgToggle.classList.toggle('on', open);
+  var dbgCheck = document.getElementById('set-debug');
+  dbgCheck.addEventListener('change', function () {
+    dbgPanel.hidden = !dbgCheck.checked;
+    document.getElementById('val-debug').textContent = dbgCheck.checked ? 'on' : 'off';
   });
   var dbgExt = gl.getExtension('WEBGL_debug_renderer_info');
   var dbgRenderer = dbgExt ? gl.getParameter(dbgExt.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
