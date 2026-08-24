@@ -28,6 +28,8 @@ Every planetary surface is real data, downsampled and embedded directly in the
 HTML as base64 — no network requests, no textures to load. Maps are
 equirectangular and sampled per particle at generation time.
 
+The same list is in the page itself, behind **credits** in the top-right corner.
+
 | Map | Source | Encoding | Size |
 | --- | --- | --- | --- |
 | Earth land mask | NASA Blue Marble (Nov 2004) | 512×256, 1 bit/cell | 16 KB |
