@@ -48,3 +48,12 @@ Imagery courtesy of NASA Earth Observatory, NASA/GSFC/Arizona State University
 A single self-contained `index.html` (~435 KB) — no dependencies, no build step.
 One WebGL 1 point-sprite pass; all motion (assembly, waves, vortices, depth of
 field) is computed in the vertex shader.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The embedded NASA and NOAA maps are public domain;
+credit is given above.
+
+## Analytics
+
+This site uses Google Analytics to understand basic usage.
