@@ -634,24 +634,21 @@
     },
     sun: function (t, n, sh, ti, ex) {
       // Modeled after SDO imagery: a deep red-orange disc laced with dark
-      // filaments, a few blazing yellow-white active regions, a glowing limb,
-      // and ONE dramatic eruption blasting sideways off the disc.
-      // -- the eruption: a slanted turbulent jet anchored near the equator --
-      var elat = (Math.random() * 60 - 30) * 0.01745;
-      var elon = Math.random() * 6.283;
-      var ecl = Math.cos(elat);
-      var E = [ecl * Math.cos(elon), Math.sin(elat), ecl * Math.sin(elon)];
-      var rt = randDir();
-      var T = [rt[1]*E[2] - rt[2]*E[1], rt[2]*E[0] - rt[0]*E[2], rt[0]*E[1] - rt[1]*E[0]];
-      var tlen = Math.sqrt(T[0]*T[0] + T[1]*T[1] + T[2]*T[2]) || 1;
-      T = [T[0]/tlen, T[1]/tlen, T[2]/tlen];
-      var J = [E[0]*0.55 + T[0]*0.83, E[1]*0.55 + T[1]*0.83, E[2]*0.55 + T[2]*0.83]; // jet direction
-      // -- one modest loop elsewhere --
-      var lb = randDir();
-      var lr = randDir();
-      var lt = [lr[1]*lb[2] - lr[2]*lb[1], lr[2]*lb[0] - lr[0]*lb[2], lr[0]*lb[1] - lr[1]*lb[0]];
-      var ltl = Math.sqrt(lt[0]*lt[0] + lt[1]*lt[1] + lt[2]*lt[2]) || 1;
-      lt = [lt[0]/ltl, lt[1]/ltl, lt[2]/ltl];
+      // filaments, blazing "fire seas" of concentrated flame, a glowing limb,
+      // and a handful of prominence loops on the rim.
+      var arcs = [];
+      for (var a = 0; a < 5; a++) {
+        var base = randDir();
+        var rnd = randDir();
+        var tx = rnd[1]*base[2] - rnd[2]*base[1];
+        var ty = rnd[2]*base[0] - rnd[0]*base[2];
+        var tz = rnd[0]*base[1] - rnd[1]*base[0];
+        var tl = Math.sqrt(tx*tx + ty*ty + tz*tz) || 1;
+        arcs.push([base[0], base[1], base[2], tx/tl, ty/tl, tz/tl,
+                   0.3 + Math.random() * 0.35,     // angular span
+                   0.14 + Math.random() * 0.22,    // loop height
+                   0.02 + Math.random() * 0.02]);  // tube thickness
+      }
       // -- surface texture: fine granulation + low-frequency dark filaments --
       var waves = [];
       for (var wv = 0; wv < 6; wv++) {
@@ -665,14 +662,21 @@
         var ff = 2.2 + Math.random() * 1.4;
         fil.push([fd[0]*ff, fd[1]*ff, fd[2]*ff, Math.random() * 6.283]);
       }
-      // -- blazing active regions (bright tangles) and a few subtle dark spots --
+      // -- fire seas: large lakes of concentrated flame + smaller hot tangles --
       var act = [];
-      for (var av = 0; av < 4; av++) {
-        var alat = (Math.random() * 70 - 35) * 0.01745;
+      for (var av = 0; av < 2; av++) {
+        var alat = (Math.random() * 60 - 30) * 0.01745;
         var alon = Math.random() * 6.283;
         var acl = Math.cos(alat);
         act.push([acl*Math.cos(alon), Math.sin(alat), acl*Math.sin(alon),
-                  0.14 + Math.random() * 0.16, 0.55 + Math.random() * 0.55]);
+                  0.3 + Math.random() * 0.2, 0.85 + Math.random() * 0.35]);
+      }
+      for (av = 0; av < 3; av++) {
+        var blat = (Math.random() * 70 - 35) * 0.01745;
+        var blon = Math.random() * 6.283;
+        var bcl = Math.cos(blat);
+        act.push([bcl*Math.cos(blon), Math.sin(blat), bcl*Math.sin(blon),
+                  0.14 + Math.random() * 0.12, 0.55 + Math.random() * 0.4]);
       }
       var spots = [];
       for (var sp = 0; sp < 3; sp++) {
@@ -684,39 +688,24 @@
       for (var i = 0; i < N; i++) {
         var sel = Math.random();
         var px, py, pz, r;
-        if (sel < 0.05) {
-          // the big eruption: turbulent cone widening with distance
-          var s = Math.pow(Math.random(), 1.35);        // denser at the base
-          var wjet = 0.015 + s * 0.13;
-          px = E[0] + J[0]*s*0.85 + (Math.random()-0.5)*wjet*2;
-          py = E[1] + J[1]*s*0.85 + (Math.random()-0.5)*wjet*2;
-          pz = E[2] + J[2]*s*0.85 + (Math.random()-0.5)*wjet*2;
+        if (sel < 0.06) {
+          // prominence loops swaying on the rim
+          var ar = arcs[(Math.random() * arcs.length) | 0];
+          var s = Math.random();
+          var ang = (s - 0.5) * ar[6];
+          var ca = Math.cos(ang), sa = Math.sin(ang);
+          var height = 1.0 + Math.sin(Math.PI * s) * ar[7];
+          var tube = ar[8] * (0.3 + 0.7 * Math.sin(Math.PI * s));
+          px = (ar[0]*ca + ar[3]*sa) * height + (Math.random() - 0.5) * tube * 2;
+          py = (ar[1]*ca + ar[4]*sa) * height + (Math.random() - 0.5) * tube * 2;
+          pz = (ar[2]*ca + ar[5]*sa) * height + (Math.random() - 0.5) * tube * 2;
           var pl = Math.sqrt(px*px + py*py + pz*pz) || 1;
           t[i*3] = px; t[i*3+1] = py; t[i*3+2] = pz;
           n[i*3] = px/pl; n[i*3+1] = py/pl; n[i*3+2] = pz/pl;
-          sh[i] = 2.3 * (1 - 0.7*s) + Math.random() * 0.3;
-          ti[i*4] = 1.0;
-          ti[i*4+1] = Math.max(0.2, 0.85 - s * 0.6);
-          ti[i*4+2] = Math.max(0.02, 0.5 - s * 0.45);
-          ti[i*4+3] = 0.95;
+          sh[i] = 1.5 + Math.random() * 0.5;
+          ti[i*4] = 1.0; ti[i*4+1] = 0.42 + Math.random()*0.12; ti[i*4+2] = 0.14 + Math.random()*0.08; ti[i*4+3] = 0.95;
           ex[i] = 0.05 + s * 0.95;
-        } else if (sel < 0.075) {
-          // one modest prominence loop
-          var ls = Math.random();
-          var lang = (ls - 0.5) * 0.45;
-          var lca = Math.cos(lang), lsa = Math.sin(lang);
-          var lh = 1.0 + Math.sin(Math.PI * ls) * 0.2;
-          var lw = 0.022 * (0.3 + 0.7 * Math.sin(Math.PI * ls));
-          px = (lb[0]*lca + lt[0]*lsa) * lh + (Math.random()-0.5)*lw*2;
-          py = (lb[1]*lca + lt[1]*lsa) * lh + (Math.random()-0.5)*lw*2;
-          pz = (lb[2]*lca + lt[2]*lsa) * lh + (Math.random()-0.5)*lw*2;
-          var lpl = Math.sqrt(px*px + py*py + pz*pz) || 1;
-          t[i*3] = px; t[i*3+1] = py; t[i*3+2] = pz;
-          n[i*3] = px/lpl; n[i*3+1] = py/lpl; n[i*3+2] = pz/lpl;
-          sh[i] = 1.5 + Math.random() * 0.4;
-          ti[i*4] = 1.0; ti[i*4+1] = 0.45; ti[i*4+2] = 0.15; ti[i*4+3] = 0.95;
-          ex[i] = 0.05 + ls * 0.95;
-        } else if (sel < 0.115) {
+        } else if (sel < 0.1) {
           // faint red chromosphere fuzz hugging the limb
           var d = randDir();
           r = 1.01 + Math.pow(Math.random(), 2.0) * 0.07;
@@ -753,15 +742,15 @@
           for (var a2 = 0; a2 < act.length; a2++) {
             var ac = act[a2];
             var adot = d2[0]*ac[0] + d2[1]*ac[1] + d2[2]*ac[2];
-            if (adot < 0.9) continue;
+            if (adot < 0.75) continue;
             var aa = Math.sqrt(Math.max(0, 2 * (1 - adot)));
             hot += Math.exp(-(aa*aa)/(ac[3]*ac[3])) * ac[4];
           }
           hot *= 0.5 + 0.9 * gn;                          // filamentary texture inside the blaze
-          var heat = Math.min(1.15, gn * 0.5 * filF * spotF + hot);
+          var heat = Math.min(1.25, gn * 0.5 * filF * spotF + hot);
           t[i*3] = d2[0]*r; t[i*3+1] = d2[1]*r; t[i*3+2] = d2[2]*r;
           n[i*3] = d2[0]; n[i*3+1] = d2[1]; n[i*3+2] = d2[2];
-          sh[i] = 0.3 + heat * 1.6;
+          sh[i] = 0.3 + heat * 1.7;
           // fire ramp: ember red -> orange -> yellow-white only at the hottest
           ti[i*4]   = Math.min(1, 0.4 + heat * 0.8);
           ti[i*4+1] = 0.05 + heat * heat * 0.75;
@@ -839,8 +828,28 @@
   // shapes are regenerated into the shared arrays: at 2M capacity caching every
   // shape would cost hundreds of MB, and generation happens during the cloud phase
   var shape = 'earth', pendingShape = null;
+  var preSun = null;   // user's size/count remembered while the sun preset is active
+  function applySizeCount(size, count) {
+    SET.size = size; resize();
+    SET.count = count; drawCount = count; degraded = true;
+    document.getElementById('set-size').value = size;
+    document.getElementById('val-size').textContent = size.toFixed(2);
+    document.getElementById('set-count').value = count;
+    document.getElementById('val-count').textContent = Math.round(count / 1000) + 'k';
+    hudSub.textContent = fmt(count) + ' particles · webgl';
+  }
   function applyShape(name) {
+    // the sun looks best chunky and dense: 0.6 size at 1M particles;
+    // the user's own values come back when leaving the sun
+    var wasSun = shape === 'sun';
     shape = name;
+    if (name === 'sun' && !wasSun) {
+      preSun = { size: SET.size, count: SET.count };
+      applySizeCount(0.6, 1000000);
+    } else if (name !== 'sun' && wasSun && preSun) {
+      applySizeCount(preSun.size, preSun.count);
+      preSun = null;
+    }
     GEN[name](target, normal, shadeArr, tintArr, extraArr);
     gl.bindBuffer(gl.ARRAY_BUFFER, bufTarget); gl.bufferSubData(gl.ARRAY_BUFFER, 0, target);
     gl.bindBuffer(gl.ARRAY_BUFFER, bufNormal); gl.bufferSubData(gl.ARRAY_BUFFER, 0, normal);
