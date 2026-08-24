@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Up to 2 million WebGL particles assemble into the Sun, Earth, the Moon, Saturn, a cube, or a torus. Water, particle, and fog modes; stir the surface with your cursor. Real NASA and NOAA maps.">
+<meta name="description" content="Up to 10 million WebGL particles assemble into the Sun, Earth, the Moon, Saturn, a cube, or a torus. Water, particle, and fog modes; stir the surface with your cursor. Real NASA and NOAA maps.">
 <meta property="og:title" content="Stardust">
-<meta property="og:description" content="2M WebGL particles form planets you can stir with your cursor.">
+<meta property="og:description" content="10M WebGL particles form planets you can stir with your cursor.">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>&#x2728;</text></svg>">
 <title>Stardust</title>
@@ -267,7 +267,7 @@
   <div id="adv-panel" hidden>
     <label>particle size <input type="range" id="set-size" min="0.15" max="1.5" step="0.05" value="0.35"><span id="val-size">0.35</span></label>
     <label>hand size <input type="range" id="set-hand" min="0.06" max="1.25" step="0.01" value="0.19"><span id="val-hand">0.19</span></label>
-    <label>particles <input type="range" id="set-count" min="20000" max="2000000" step="20000" value="1000000"><span id="val-count">1000k</span></label>
+    <label>particles <input type="range" id="set-count" min="20000" max="10000000" step="20000" value="1000000"><span id="val-count">1M</span></label>
     <label>focus <input type="range" id="set-fov" min="0" max="100" step="1" value="13"><span id="val-fov">13%</span></label>
     <label>sea floor <input type="checkbox" id="set-floor" checked><span id="val-floor">on</span></label>
     <label>city lights <input type="checkbox" id="set-city" checked><span id="val-city">on</span></label>
@@ -294,9 +294,10 @@
   'use strict';
 
   // ---------- loading screen ----------
-  // Boot is not cheap: shaders, 2M particles, ~70 MB of vertex buffers. It runs
-  // in time-boxed slices behind this screen so the tab never locks up, and the
-  // bar tracks real work instead of a guessed duration.
+  // Boot is not cheap: shaders, a million particles, tens of MB of vertex
+  // buffers. It runs in time-boxed slices behind this screen so the tab never
+  // locks up, and the bar tracks real work instead of a guessed duration.
+  // The screen stays in the DOM: raising the particle count reuses it.
   var loaderEl = document.getElementById('loader');
   document.body.classList.add('loading');   // also when a host supplies its own <body>
   var ldFill = document.getElementById('ld-fill');
@@ -311,15 +312,18 @@
     ldFill.style.width = (frac * 100).toFixed(1) + '%';
     ldPct.textContent = Math.round(frac * 100) + '%';
   }
+  function ldShow(label) {
+    ldSet(0, label);
+    loaderEl.classList.remove('done');
+    document.body.classList.add('loading');
+  }
   function ldHide() {
     loaderEl.classList.add('done');
     document.body.classList.remove('loading');
-    setTimeout(function () {
-      if (loaderEl.parentNode) loaderEl.parentNode.removeChild(loaderEl);
-    }, 700);
   }
   // Steps are { label, n, chunk, run(i0, i1) }. The chunk size adapts after
-  // every call so one call lands near half the budget on any machine.
+  // every call so one call lands near half the budget on any machine — never
+  // above step.chunk, which is how big the staging buffer actually is.
   function runBoot(steps, done) {
     var total = 0;
     for (var k = 0; k < steps.length; k++) total += steps[k].n;
@@ -341,7 +345,7 @@
         var took = performance.now() - c0;
         doneUnits += i1 - cur;
         cur = i1;
-        if (took > 0.2) chunk = Math.max(1024, Math.min(st.n, Math.round(chunk * LD_SLICE * 0.5 / took)));
+        if (took > 0.2) chunk = Math.max(1024, Math.min(st.chunk, st.n, Math.round(chunk * LD_SLICE * 0.5 / took)));
         if (cur >= st.n) { si++; cur = 0; if (si < steps.length) chunk = steps[si].chunk; }
         if (performance.now() - t0 >= LD_SLICE) break;
       }
@@ -619,22 +623,30 @@
   U.uRipAxis = gl.getUniformLocation(prog, 'uRipAxis[0]');
 
   // ---------- particles ----------
-  var N = 2000000;         // allocated capacity; how many are drawn is a setting
-  var target = new Float32Array(N * 3);
-  var normal = new Float32Array(N * 3);
-  var shadeArr = new Float32Array(N);
-  var tintArr = new Float32Array(N * 4);   // w=0 → no override (plain shapes)
-  var extraArr = new Float32Array(N);      // sun: arc param / corona flag
-  var seed = new Float32Array(N * 2);
+  // Capacity is not assumed, it is allocated: the buffers hold exactly what the
+  // count slider asked for, and only ever grow — going past it rebuilds the
+  // world behind the loading screen. Reserving the 10M ceiling up front would
+  // be 350 MB of vertex buffers, so nobody pays for it until they ask.
+  var MAXN = isCoarse ? 2000000 : 10000000;   // how far the slider can go
+  var N = 0;                                  // particles the GPU buffers hold
+  // The CPU side is one chunk wide and reused for every slice: generators fill
+  // it from 0, packRange quantizes it, uploadRange drops it at the right offset
+  // in the GPU buffer. 10M particles cost ~2 MB of RAM here, not 750 MB.
+  var CHUNK = 25000;
+  var target = new Float32Array(CHUNK * 3);
+  var normal = new Float32Array(CHUNK * 3);
+  var shadeArr = new Float32Array(CHUNK);
+  var tintArr = new Float32Array(CHUNK * 4);   // w=0 → no override (plain shapes)
+  var extraArr = new Float32Array(CHUNK);      // sun: arc param / corona flag
+  var seed = new Float32Array(CHUNK * 2);
   // packed GPU copies: int16 positions, int8 normals, uint8 colors — ~45% less
   // vertex bandwidth than floats; the quantization step is far below a pixel
-  var tgtQ = new Int16Array(N * 3), nrmQ = new Int8Array(N * 3), tintQ = new Uint8Array(N * 4);
-  var scatQ = new Int16Array(N * 3);
+  var tgtQ = new Int16Array(CHUNK * 3), nrmQ = new Int8Array(CHUNK * 3), tintQ = new Uint8Array(CHUNK * 4);
+  var scatQ = new Int16Array(CHUNK * 3);
 
-  // the scattered cloud: a wide shell around the shape, shared by all shapes —
-  // ranged like the generators so boot can fill it a slice at a time
-  function fillScatter(i0, i1) {
-    for (var i = i0; i < i1; i++) {
+  // the scattered cloud: a wide shell around the shape, shared by all shapes
+  function fillScatter(n) {
+    for (var i = 0; i < n; i++) {
       var u2 = Math.random() * 2 - 1;
       var phi2 = Math.random() * Math.PI * 2;
       var s2 = Math.sqrt(1 - u2 * u2);
@@ -1150,59 +1162,80 @@
   };
 
   var ATTRS = [];   // bindings to restore after the background quad pass
-  function bindAttr(name, data, size, type, norm) {
+  var VBYTES = 0;   // vertex bytes per particle, summed from the bindings
+  function bindAttr(name, size, type, norm, stride) {
     var buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, data.byteLength, gl.STATIC_DRAW);   // filled in slices
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);   // sized later, by allocParticles
     var loc = gl.getAttribLocation(prog, name);
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, size, type, norm, 0, 0);
-    ATTRS.push({ loc: loc, buf: buf, size: size, type: type, norm: norm });
+    ATTRS.push({ loc: loc, buf: buf, size: size, type: type, norm: norm, stride: stride });
+    VBYTES += stride;
     return buf;
   }
-  function packRange(i0, i1) {
-    for (var k = i0 * 3; k < i1 * 3; k++) {
+  function packRange(n) {
+    for (var k = 0; k < n * 3; k++) {
       tgtQ[k] = Math.max(-32767, Math.min(32767, Math.round(target[k] * 16383.5)));
       nrmQ[k] = Math.max(-127, Math.min(127, Math.round(normal[k] * 127)));
     }
-    for (k = i0 * 4; k < i1 * 4; k++) tintQ[k] = Math.max(0, Math.min(255, Math.round(tintArr[k] * 255)));
+    for (k = 0; k < n * 4; k++) tintQ[k] = Math.max(0, Math.min(255, Math.round(tintArr[k] * 255)));
   }
-  var bufTarget = bindAttr('aTargetQ', tgtQ, 3, gl.SHORT, true);
-  var bufNormal = bindAttr('aNormal', nrmQ, 3, gl.BYTE, true);
-  var bufShade = bindAttr('aShade', shadeArr, 1, gl.FLOAT, false);
-  var bufTint = bindAttr('aTint', tintQ, 4, gl.UNSIGNED_BYTE, true);
-  var bufExtra = bindAttr('aExtra', extraArr, 1, gl.FLOAT, false);
-  var bufScatter = bindAttr('aScatterQ', scatQ, 3, gl.SHORT, true);
-  var bufSeed = bindAttr('aSeed', seed, 2, gl.FLOAT, false);
-  function uploadCloud(i0, i1) {
-    gl.bindBuffer(gl.ARRAY_BUFFER, bufScatter); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 6, scatQ.subarray(i0 * 3, i1 * 3));
-    gl.bindBuffer(gl.ARRAY_BUFFER, bufSeed); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 8, seed.subarray(i0 * 2, i1 * 2));
+  var bufTarget = bindAttr('aTargetQ', 3, gl.SHORT, true, 6);
+  var bufNormal = bindAttr('aNormal', 3, gl.BYTE, true, 3);
+  var bufShade = bindAttr('aShade', 1, gl.FLOAT, false, 4);
+  var bufTint = bindAttr('aTint', 4, gl.UNSIGNED_BYTE, true, 4);
+  var bufExtra = bindAttr('aExtra', 1, gl.FLOAT, false, 4);
+  var bufScatter = bindAttr('aScatterQ', 3, gl.SHORT, true, 6);
+  var bufSeed = bindAttr('aSeed', 2, gl.FLOAT, false, 8);
+  // Size every particle buffer for n particles. The contents are discarded, so
+  // the caller has to rebuild the world. Returns false when the driver refuses
+  // the allocation — the capacity that already worked is restored and kept.
+  function allocParticles(n) {
+    var i;
+    while (gl.getError() !== gl.NO_ERROR) {}   // start from a clean slate
+    for (i = 0; i < ATTRS.length; i++) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, ATTRS[i].buf);
+      gl.bufferData(gl.ARRAY_BUFFER, n * ATTRS[i].stride, gl.STATIC_DRAW);
+    }
+    if (gl.getError() === gl.NO_ERROR) { N = n; return true; }
+    for (i = 0; i < ATTRS.length; i++) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, ATTRS[i].buf);
+      gl.bufferData(gl.ARRAY_BUFFER, N * ATTRS[i].stride, gl.STATIC_DRAW);
+    }
+    while (gl.getError() !== gl.NO_ERROR) {}
+    return false;
   }
-  function uploadRange(i0, i1) {
-    packRange(i0, i1);
-    gl.bindBuffer(gl.ARRAY_BUFFER, bufTarget); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 6, tgtQ.subarray(i0 * 3, i1 * 3));
-    gl.bindBuffer(gl.ARRAY_BUFFER, bufNormal); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 3, nrmQ.subarray(i0 * 3, i1 * 3));
-    gl.bindBuffer(gl.ARRAY_BUFFER, bufShade); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 4, shadeArr.subarray(i0, i1));
-    gl.bindBuffer(gl.ARRAY_BUFFER, bufTint); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 4, tintQ.subarray(i0 * 4, i1 * 4));
-    gl.bindBuffer(gl.ARRAY_BUFFER, bufExtra); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 4, extraArr.subarray(i0, i1));
+  // the staged chunk always starts at 0 and lands at particle i0 on the GPU
+  function uploadCloud(i0, n) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufScatter); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 6, scatQ.subarray(0, n * 3));
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufSeed); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 8, seed.subarray(0, n * 2));
+  }
+  function uploadRange(i0, n) {
+    packRange(n);
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufTarget); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 6, tgtQ.subarray(0, n * 3));
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufNormal); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 3, nrmQ.subarray(0, n * 3));
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufShade); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 4, shadeArr.subarray(0, n));
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufTint); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 4, tintQ.subarray(0, n * 4));
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufExtra); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 4, extraArr.subarray(0, n));
   }
 
   // ---------- shape switching: scatter → swap targets → reassemble ----------
-  // shapes are regenerated into the shared arrays: at 2M capacity caching every
-  // shape would cost hundreds of MB, and generation happens during the cloud phase
+  // shapes are regenerated into the staging chunk: caching every shape would
+  // cost hundreds of MB, and generation hides inside the cloud phase anyway
   var shape = 'earth', pendingShape = null;
   var preSun = null;   // user's size/count remembered while the sun preset is active
   function applySizeCount(size, count) {
+    count = Math.min(count, N);   // never draw past what is allocated
     SET.size = size; resize();
     SET.count = count; drawCount = count; degraded = true;
     document.getElementById('set-size').value = size;
     document.getElementById('val-size').textContent = size.toFixed(2);
     document.getElementById('set-count').value = count;
-    document.getElementById('val-count').textContent = Math.round(count / 1000) + 'k';
+    document.getElementById('val-count').textContent = countLabel(count);
     hudSub.textContent = fmt(count) + ' particles · webgl';
   }
   // generation is time-sliced: a few ms per frame during the cloud phase, chunk
-  // by chunk straight into the GPU buffers — no main-thread freeze at 2M
+  // by chunk straight into the GPU buffers — no main-thread freeze at 10M
   var genJob = null;
   function applyShape(name) {
     // the sun looks best chunky and dense: 0.6 size at 1M particles;
@@ -1223,10 +1256,10 @@
     if (!genJob) return;
     var t0 = performance.now();
     do {
-      var i1 = Math.min(N, genJob.i + 25000);
-      GEN[genJob.name](target, normal, shadeArr, tintArr, extraArr, genJob.i, i1, genJob.seed);
-      uploadRange(genJob.i, i1);
-      genJob.i = i1;
+      var n = Math.min(CHUNK, N - genJob.i);
+      GEN[genJob.name](target, normal, shadeArr, tintArr, extraArr, 0, n, genJob.seed);
+      uploadRange(genJob.i, n);
+      genJob.i += n;
     } while (genJob.i < N && performance.now() - t0 < budgetMs);
     if (genJob.i >= N) genJob = null;
   }
@@ -1586,6 +1619,7 @@
     advPanel.hidden = !open;
     advToggle.classList.toggle('on', open);
   });
+  var countEl = document.getElementById('set-count');
   function bindSlider(id, valId, apply, format) {
     var el = document.getElementById(id);
     var lab = document.getElementById(valId);
@@ -1597,18 +1631,30 @@
   }
   bindSlider('set-size', 'val-size', function (v) { SET.size = v; resize(); }, function (v) { return v.toFixed(2); });
   bindSlider('set-hand', 'val-hand', function (v) { SET.hand = v; }, function (v) { return v.toFixed(2); });
+  function countLabel(v) {
+    return v >= 1000000 ? (v / 1000000).toFixed(v % 1000000 ? 2 : 0) + 'M' : Math.round(v / 1000) + 'k';
+  }
   bindSlider('set-count', 'val-count', function (v) {
-    SET.count = v; drawCount = v;
+    SET.count = v;
     degraded = true;   // manual choice switches auto quality drop off
     hudSub.textContent = fmt(v) + ' particles · webgl';
-  }, function (v) { return Math.round(v / 1000) + 'k'; });
+    if (v <= N) drawCount = v;   // already built — takes effect this frame
+  }, countLabel);
+  // Going above the allocated capacity needs new buffers and a new world, so it
+  // waits for the drag to end and then runs the loading screen. Dragging back
+  // down is free: the particles are there, we just stop drawing them.
+  countEl.max = MAXN;
+  countEl.addEventListener('change', function () {
+    var v = parseFloat(countEl.value);
+    if (v > N) growWorld(v);
+  });
   bindSlider('set-fov', 'val-fov', function (v) {
     SET.focus = v / 100;   // focal plane position inside the object
   }, function (v) { return v + '%'; });
   if (isCoarse) {
     // reflect the lighter mobile default in the panel
-    document.getElementById('set-count').value = SET.count;
-    document.getElementById('val-count').textContent = Math.round(SET.count / 1000) + 'k';
+    countEl.value = SET.count;
+    document.getElementById('val-count').textContent = countLabel(SET.count);
   }
   function bindToggle(id, valId, key) {
     var el = document.getElementById(id);
@@ -1641,7 +1687,7 @@
     dbgPanel.textContent =
       'fps ' + Math.round(1000 / avg) + '  ·  frame ' + avg.toFixed(1) + ' ms  (min ' + mn.toFixed(1) + ' / max ' + mx.toFixed(1) + ')\n' +
       'js ' + dbgJs.toFixed(2) + ' ms/frame  ·  ' + (SET.vsync ? 'vsync' : 'uncapped') + '\n' +
-      'particles ' + fmt(drawCount) + ' / ' + fmt(N) + '  ·  ' + fmt(drawCount * 36 / 1024 / 1024 | 0) + ' MB vertex stream\n' +
+      'particles ' + fmt(drawCount) + ' / ' + fmt(N) + '  ·  ' + fmt(N * VBYTES / 1024 / 1024 | 0) + ' MB vertex buffers\n' +
       'canvas ' + canvas.width + 'x' + canvas.height + ' @' + dpr.toFixed(2) + '  ·  focus ' + Math.round(SET.focus * 100) + '%\n' +
       'shape ' + shape + '  ·  mode ' + mode + '  ·  phase ' + phaseNames[phase] + '\n' +
       'touch ' + (dbgLive ? 'active' : 'idle') + '  ·  waves alive ' + dbgLive + '/' + RIPPLES + '  ·  repulse ' + repulse.toFixed(3) + '\n' +
@@ -1895,17 +1941,46 @@
       if (dbgPanel.hidden) dbgTimes.length = 0; else dbgUpdate();
     }
   }
-  runBoot([
-    { label: 'scattering ' + fmt(N) + ' particles', n: N, chunk: 40000, run: function (i0, i1) {
-        fillScatter(i0, i1);
-        uploadCloud(i0, i1);
-      } },
-    { label: 'forming earth', n: N, chunk: 20000, run: function (i0, i1) {
-        GEN.earth(target, normal, shadeArr, tintArr, extraArr, i0, i1, 1);
-        uploadRange(i0, i1);
-      } }
-  ], function () {
-    ldHide();
+  // Build `count` particles of `shapeName` into freshly sized buffers, behind
+  // the loading screen. This is both the first boot and what a bigger particle
+  // count does: allocation discards everything, so the world is made again.
+  function buildWorld(count, shapeName, done) {
+    genJob = null; pendingShape = null; drawCount = 0;
+    if (!allocParticles(count)) {
+      if (!N) { document.getElementById('fallback').style.display = 'flex'; return; }
+      count = N;   // the driver said no: settle for the capacity that worked
+      SET.count = N;
+      document.getElementById('set-count').value = N;
+      document.getElementById('val-count').textContent = countLabel(N);
+    }
+    hudSub.textContent = fmt(count) + ' particles · webgl';
+    var buildSeed = (Math.random() * 1e9) | 0;
+    ldShow('preparing');
+    runBoot([
+      { label: 'scattering ' + fmt(count) + ' particles', n: count, chunk: CHUNK, run: function (i0, i1) {
+          fillScatter(i1 - i0);
+          uploadCloud(i0, i1 - i0);
+        } },
+      { label: 'forming ' + shapeName, n: count, chunk: CHUNK, run: function (i0, i1) {
+          GEN[shapeName](target, normal, shadeArr, tintArr, extraArr, 0, i1 - i0, buildSeed);
+          uploadRange(i0, i1 - i0);
+        } }
+    ], function () {
+      ldHide();
+      drawCount = SET.count;
+      done();
+    });
+  }
+  // raising the slider past the allocated capacity: rebuild at the new size
+  function growWorld(count) {
+    var next = pendingShape || shape;   // a switch waiting on the cloud still wins
+    shape = next;
+    buildWorld(Math.min(count, MAXN), next, function () {
+      phase = PH_ASSEMBLE; phaseT = 0; assemble = 0;
+      newScatterOrientation();
+    });
+  }
+  buildWorld(SET.count, 'earth', function () {
     requestAnimationFrame(frame);
   });
 })();

@@ -1,6 +1,6 @@
 # Stardust
 
-Up to **2 million WebGL particles** assemble into the Sun, Earth, the Moon,
+Up to **10 million WebGL particles** assemble into the Sun, Earth, the Moon,
 Saturn, a cube, or a torus — and you can stir them with your cursor.
 
 **Live: https://gaploid.github.io/stardust/**
@@ -16,7 +16,7 @@ Saturn, a cube, or a torus — and you can stir them with your cursor.
   *particles* (crisp film-grain points), *fog* (volumetric puffs).
 - **Cursor** — a touch bubble parts the near surface, rings ripple outward, the
   trail sheds vortices and drags the medium along.
-- **Advanced panel** — particle size, hand size, particle count (20k–2M), a
+- **Advanced panel** — particle size, hand size, particle count (20k–10M), a
   depth-of-field focus slider, and toggles for sea floor, city lights,
   atmosphere, trails, and starfield.
 
@@ -45,9 +45,14 @@ Imagery courtesy of NASA Earth Observatory, NASA/GSFC/Arizona State University
 
 ## Tech
 
-A single self-contained `index.html` (~435 KB) — no dependencies, no build step.
+A single self-contained `index.html` (~450 KB) — no dependencies, no build step.
 One WebGL 1 point-sprite pass; all motion (assembly, waves, vortices, depth of
 field) is computed in the vertex shader.
+
+Vertex buffers are sized to the particle count the slider asks for and grow only
+when it is raised — 10M particles is 333 MB of VRAM, so it is opt-in. The CPU
+side stages one 25k chunk at a time, which keeps generation off the main thread
+in slices and costs ~2 MB of RAM whatever the count.
 
 ## License
 
