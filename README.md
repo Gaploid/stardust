@@ -41,10 +41,15 @@ The same list is in the page itself, behind **credits** in the top-right corner.
 | Jupiter clouds | NASA/JPL/SSI Cassini cylindrical map (PIA07782) | 512×256, 4 bit/cell | 64 KB |
 | Jupiter chroma | same map, red minus blue | 256×128, 4 bit/cell | 16 KB |
 | Jupiter bands | same map, averaged along each latitude | 256 latitudes × RGB | 768 B |
-| Saturn body | NASA Cassini-derived texture | 256 latitudes × RGB | 768 B |
+| Saturn body | Cassini bands, recoloured to PIA06193 (natural colour) | 256 latitudes × RGB | 768 B |
 | Saturn rings | NASA Cassini-derived texture | 128 radial samples × RGBA | 512 B |
 
 The Sun uses no map — it is generated procedurally.
+
+Saturn's strip keeps its Cassini band structure but wears a palette measured off
+PIA06193, the natural-colour mosaic: sunlit disc rgb(222, 206, 158), half-lit
+mid latitudes rgb(146, 138, 119), winter north rgb(82, 84, 92). Saturn is
+butterscotch and grey, not the lemon the strip used to make of it.
 
 Jupiter is split into three layers rather than one colour map: brightness
 carries the belts, the ovals and the Great Red Spot and needs the resolution,

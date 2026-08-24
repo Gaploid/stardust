@@ -306,7 +306,7 @@
     <li><b>Jupiter clouds</b>NASA/JPL/SSI Cassini cylindrical map (PIA07782)<i>512×256 · 4 bit/cell · 64 KB</i></li>
     <li><b>Jupiter chroma</b>same map, red minus blue<i>256×128 · 4 bit/cell · 16 KB</i></li>
     <li><b>Jupiter bands</b>same map, averaged along each latitude<i>256 latitudes × RGB · 768 B</i></li>
-    <li><b>Saturn body</b>NASA Cassini-derived texture<i>256 latitudes × RGB · 768 B</i></li>
+    <li><b>Saturn body</b>Cassini band structure, recoloured to the natural-colour mosaic (PIA06193)<i>256 latitudes × RGB · 768 B</i></li>
     <li><b>Saturn rings</b>NASA Cassini-derived texture<i>128 radial samples × RGBA · 512 B</i></li>
     <li><b>The Sun</b>No map — procedural, modeled on NASA SDO imagery<i>filaments, fire seas, prominence loops</i></li>
   </ul>
@@ -869,8 +869,12 @@
     return ((idx & 1) ? (b & 15) : (b >> 4)) / 15;
   }
 
-  // Saturn: per-latitude body colors + radial ring profile from NASA textures
-  var SAT_BODY = 'gR4FjicGlTwNok4VpVYZqlsdrWIjtGcou24tvnAuwnYyyH04y4M8zIE6z4I91IZB1oxF2ZJI3ZhK4JxL4p9K4p1F455E5aBG56RJ6KVK6KVK6KNH6KVH6aZG6alH6alH6q1K6qxJ66tH6qhE66tI7KtK7K1M7KxJ7K9L7LBM7LVU7LVU7LlZ7LtZ67xY6r5V6r9V6r5U6sFW6sBU6r5S6b5R6bxO6bhI6LlG6LdC6LhC6LdC6LlD6LtH6MNR6MdX6c1g6c1g6c1e6Mxb6c1d6MhV6MNN571H571G6L1H6LxH57pD6L1H6L5J6L9K6L5J6MFM58BK58RO58JJ58VM58dO58VO58BI5sBG5r5D571F57tF6L1H6LtF6LY/6LM+6bZD6LdD57lB57o+57w+57s957g55rYy5rgy5rgx5rox5b805cQ55cM35cI05b4v5rwu5b8x5cQ15cU25ck85cs/5c5F5c5F5tFO5dFP5dJQ5NBM5NBL485H485F48tB48k/4sU648Q448U648hB48lC48lB48g/48tF48xG48xG48tE48pD48Y94sY54cIw4cEt4b4p4Lsl4Lgi4Lkh4Lcg4Lch4bci4bol4cAr4MUw4ccz4ck54co74ss+4sk+48xE481H5NFM5NJO5NRT5dRV5dRX5dJU5tFW5c9T5s5V5stQ5sxU58tU5spS5sNH5sNK579G6L9K6L1L6b5O6L5M6MBN6MNR6chZ6cha6cha6cZZ6cdc6cle6sxj6stk68to7Mhm7Mdn7MZn7cZn7cVm7chp7Mho7Mtr7Mxr7M5u7M1t7NF07NBy7NFz7Mxt7c1w7ctw7cpw7chu7sdt7cds7cNl7L5e7L5d7L5f7cBj7rxh7rth7bpf7blf7rZe7rZe7rNd7rRe7rNd7rNd7bBa7K5X6qtU6qxV6apT6KpU6KlU6KpY6KhZ6ada6KRZ6aZb56Ja5J1X45pT4ptT35hQ3JZO2I9H04tCzYM7yX42x3UsxHAnwGYgu1oZtEsR';   // 256 rows x RGB
+  // Saturn: per-latitude body colours + radial ring profile from NASA textures.
+  // The band structure is Cassini's; the palette is measured off PIA06193, the
+  // natural-colour mosaic — sunlit disc rgb(222, 206, 158), half-lit mid
+  // latitudes rgb(146, 138, 119), winter north rgb(82, 84, 92). Saturn is
+  // butterscotch and grey, not the lemon the old strip made of it.
+  var SAT_BODY = 'U1RaU1RaU1RaU1RaU1VbVFVbVFZcVVZcVlddV1heWVpfWltgXF1iXV5jX2BlYWJmY2RoZWZqZ2hramptbGxvbm5xcXBzc3N0dnV2eHd4e3p6fXx8f359goB/hIKBhoSCjYqFjYqGjYqGj4yIkY6JlZGLnJeNmZWNo52Qp6CRuK6Wua+WxLmbyb2dyb2dy7+ezsGfy7+e08Whz8Ogyr6eyb2dw7iauK6VuK6VsaiTtKqUsaiTt62VvbKY08Wh3s+m8eCt8eCt8N+t69ur8N+t4NGn0cShwLWZwLSZwbaav7SZuK6VwbaaxLmbx7ucxLmbzL+fyLyd0sWhzL+e1Mai2cuk1ceix7ucxbmbv7SZv7SZu7CXwbaavLGXraWTpZ6RsKiTsqmUtKuUtqyUurCWt62VrqaTpJ6RqaKSqKGSrqWTurCWx7ucxLibwbWZtqyUsaiUua+WxbqcyLyd08ai2cuk49Oo49Oo796s7t2s8eCt6dmq6dmq4dKn4NGn2Mqk0sWhxrucxLmbx7yd0cSh1Mai08ai0MOg2suk3M6l3M6l2cuk1smjy7+eyLydurCXt62VraWTop2QmZWOm5ePmZWOmZWOmZWOoZyQtKqUwLWZx7uczsGf0cSh1cij0cSh282l39Cm69ur796s9eSv9eSv9eSv8uGu8uGu69ur69ur4tOo5tap5dWp4NGnzMCfzcGfxLibx7ucw7eax7ucxbqcyr6e08Wh4tOo49So49So3s+m4tKn59ep8eCt796t8uGu7Nur6tqr6Niq6dmq5tap7t2s7dys9eOv9eSv9eSv9eSv9eSv9eSv9eSv9eSv9eSv9eSv9eSv8N+t7t2s69ur3tCmzcGgy7+fyr6fz8KhxLmdv7Wbua+YtKuWrKSSqaKRoJqMn5mMmpSJl5KHjImChIF+eXh4eHd3cXFzbm5xbGxva2tuZ2hrZWZqY2RoYWJmX2BlXV5jXF1iWltgWVpfV1heVlddVVZcVFZcVFVbU1VbU1RaU1RaU1RaU1Ra';   // 256 rows x RGB
   var SAT_RING = '////AP///wD///8A////AP///wD///8A////AA4MLg0ODC4NIxU0KSEVNCogEDIoIio4RConNzovLzk3LSk7WiwqOlY1LzxWOi08WDcvPFQ2Mz9mOi07WTcuP284MD9oOThBbjgwPl87NkFuQTVHmTk3QW46KD1nPz1LqDYzPVcxPEOQNTI/ZTswQXU/QUidRjhJpkk3QntEQEeNUEtMoWBTVcRkYF7PY15by2hgXNBoYF7RY15dzmleXtNkXV3QaWBe1mhfXtNpYGLYbmNk3WxnY9mAgHPxeXx99X50bex2enHubm1k34R+ePB4eXTvhXR+9oNtavF0Z13lgXlv7n5zbO2He2/zgXZq74h8cvOIfXHzgnVt74p/efKLhXz0f3Zv7HVrZON6cWbpfHhq7H53beuHennycW9h43VyZeZ+dm7qfHVw6YmAffOPior5c2xw7FdTU7c2QjRrOTZBbjMyPEQ0LzxEPkFEhklIUr4/QEePSElOq1dWV8VfXF/WYFtd0lpWWcpZVVW/WlZSrldUUrNcVlG0WVdRr1dUUrJZU1KyWVNSsllXUa9aVVGuWlNRr1taUbhZVVKwXFhUuV9aWchaVFKwJDAwHF5bWcZdWVnIXFlazF1fWspYW1vSERMwHw4NMRIQDzkAEA85BxAPOQcQDzkHEA42CRAPOQQ=';   // 128 radial samples x RGBA
   var satBodyBytes = null, satRingBytes = null;
   function satInit() {
@@ -1207,12 +1211,13 @@
           cr = satBodyBytes[row*3] / 255;
           cg = satBodyBytes[row*3+1] / 255;
           cb = satBodyBytes[row*3+2] / 255;
-          // the real bands are subtle: boost saturation and brightness contrast
+          // the shader dilutes every tint toward white, so the chroma is pushed
+          // back up to where PIA06193 actually measures it: r minus b around 64
           var lr = 0.299*cr + 0.587*cg + 0.114*cb;
-          cr = Math.max(0, Math.min(1, lr + (cr - lr) * 1.1));
-          cg = Math.max(0, Math.min(1, lr + (cg - lr) * 1.1));
-          cb = Math.max(0, Math.min(1, lr + (cb - lr) * 1.1));
-          shv = 0.95 * Math.pow(lr / satLumMean, 1.8) + (Math.random() - 0.5) * 0.12;
+          cr = Math.max(0, Math.min(1, lr + (cr - lr) * 1.35));
+          cg = Math.max(0, Math.min(1, lr + (cg - lr) * 1.35));
+          cb = Math.max(0, Math.min(1, lr + (cb - lr) * 1.35));
+          shv = 0.95 * Math.pow(lr / satLumMean, 1.3) + (Math.random() - 0.5) * 0.12;
         }
         var tx2 = px * ct0 - py * st0;
         var ty2 = px * st0 + py * ct0;
