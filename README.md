@@ -46,8 +46,14 @@ The same list is in the page itself, behind **credits** in the top-right corner.
 | Jupiter bands | same map, averaged along each latitude | 256 latitudes × RGB | 768 B |
 | Saturn body | Cassini bands, recoloured to PIA06193 (natural colour) | 256 latitudes × RGB | 768 B |
 | Saturn rings | NASA Cassini-derived texture | 128 radial samples × RGBA | 512 B |
+| The sky | Yale Bright Star Catalogue, 5th ed. | 5080 stars × 6 B | 30 KB |
 
 The Sun uses no map — it is generated procedurally.
+
+The starfield is the real one: every star down to magnitude 6, each carrying its
+right ascension, declination, visual magnitude and B-V colour index in six bytes.
+They sit on the celestial sphere and turn with the world, so dragging a shape
+moves the sky behind it.
 
 Saturn's strip keeps its Cassini band structure but wears a palette measured off
 PIA06193, the natural-colour mosaic: sunlit disc rgb(222, 206, 158), half-lit
@@ -60,8 +66,9 @@ while chroma varies far more slowly and rides at a quarter of it. Full colour at
 512×256 would have cost 128 KB of base64 instead of 81 KB.
 
 Imagery courtesy of NASA Earth Observatory, NASA/GSFC/Arizona State University
-(LROC), NASA/JPL-Caltech, NASA/JPL/Space Science Institute, and NOAA NCEI.
-Public domain / free to use with credit.
+(LROC), NASA/JPL-Caltech, NASA/JPL/Space Science Institute, and NOAA NCEI. Star
+positions from the Bright Star Catalogue, 5th Revised Ed. (Hoffleit & Warren),
+via the Harvard/SAO catalogue archive. Public domain / free to use with credit.
 
 ## Tech
 
