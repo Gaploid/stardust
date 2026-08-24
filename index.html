@@ -308,7 +308,7 @@
     <li><b>Jupiter bands</b>same map, averaged along each latitude<i>256 latitudes × RGB · 768 B</i></li>
     <li><b>Saturn body</b>Cassini band structure, recoloured to the natural-colour mosaic (PIA06193)<i>256 latitudes × RGB · 768 B</i></li>
     <li><b>Saturn rings</b>NASA Cassini-derived texture<i>128 radial samples × RGBA · 512 B</i></li>
-    <li><b>The Sun</b>No map — procedural, modeled on NASA SDO imagery<i>filaments, fire seas, prominence loops</i></li>
+    <li><b>The Sun</b>No map — procedural, modeled on NASA SDO imagery<i>boiling granules, filament channels, active regions, eruptions off the limb</i></li>
     <li><b>The sky</b>Yale Bright Star Catalogue, 5th ed. — every star to magnitude 6<i>5080 stars · RA, Dec, magnitude, colour index · 30 KB</i></li>
   </ul>
   <p class="cr-note">Imagery courtesy of NASA Earth Observatory, NASA/GSFC/Arizona
@@ -440,6 +440,8 @@
   var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   var RIPPLES = 16;   // how many waves live at once
+  var FL_N = 3;       // eruption slots on the sun: how many can be in flight at once
+  var VORT_N = 8;     // convection cells churning the sun's surface
 
   // advanced settings: hand, particle count, opacity, blur (point size), sea floor
   // focus has no slider — the focal plane sits just in front of the shape and
@@ -457,7 +459,7 @@
     'attribute vec3 aNormal;',      // surface normal (int8-normalized)
     'attribute float aShade;',      // per-point brightness of the shape (continents vs oceans)
     'attribute vec4 aTint;',        // rgb — surface color, w — palette override (uint8-normalized)
-    'attribute float aExtra;',      // shape extra: >0 — prominence arc param, -1 — corona dust
+    'attribute float aExtra;',      // shape extra: earth — city light; sun — activity (0..1), eruption slot+arc param (≥1), spicule (-1)
     'attribute vec3 aScatterQ;',    // int16-normalized, x4.5 = model units
     'attribute vec2 aSeed;',        // x: randomness (delay, twinkle, color), y: size
     'uniform mat3 uRot;',
@@ -500,9 +502,25 @@
     'uniform float uCity;',         // city lights amount (earth only)
     'uniform float uAtmo;',         // atmosphere shell amount (earth only)
     'uniform float uActive;',       // 1 while any touch/wave is alive — skips dead interaction math
+    // the sun: eruption slots and convection cells (see "the sun is alive")
+    'uniform vec4 uFlareA[' + FL_N + '];',      // xyz — footpoint centre (unit), w — arc span (rad)
+    'uniform vec4 uFlareB[' + FL_N + '];',      // xyz — arc tangent (unit, ⊥ centre), w — loop height
+    'uniform vec4 uFlareS[' + FL_N + '];',      // age (s), duration (s), eruptive (0/1), strength
+    'uniform vec4 uVortC[' + VORT_N + '];',     // xyz — cell centre (unit), w — 1/σ²
+    'uniform vec4 uVortW[' + VORT_N + '];',     // x, z — two swing rates, y — phase, w — swing amplitude (rad)
     'varying vec3 vCol;',
     'varying float vSoft;',         // extra per-particle softness from defocus
     'float hash(float n){ return fract(sin(n)*43758.5453123); }',
+    // 3D value noise for the sun's granulation — an integer-free hash, so it
+    // holds up in highp without sin() tricks
+    'float hash3(vec3 p){ p = fract(p*0.3183099 + vec3(0.1, 0.2, 0.3)); p *= 17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }',
+    'float noise3(vec3 x){',
+    '  vec3 i = floor(x); vec3 f = fract(x); f = f*f*(3.0-2.0*f);',
+    '  return mix(mix(mix(hash3(i), hash3(i+vec3(1.0,0.0,0.0)), f.x), mix(hash3(i+vec3(0.0,1.0,0.0)), hash3(i+vec3(1.0,1.0,0.0)), f.x), f.y),',
+    '             mix(mix(hash3(i+vec3(0.0,0.0,1.0)), hash3(i+vec3(1.0,0.0,1.0)), f.x), mix(hash3(i+vec3(0.0,1.0,1.0)), hash3(i+vec3(1.0,1.0,1.0)), f.x), f.y), f.z);',
+    '}',
+    // the sun's colour ramp: ember red, orange, yellow, white-hot — indexed by heat
+    'vec3 fire(float h){ return vec3(min(1.0, 0.35 + h*0.85), clamp(0.03 + h*h*0.5 + max(h - 0.9, 0.0)*0.9, 0.0, 0.88), clamp(max(h - 1.0, 0.0)*0.5, 0.0, 0.4)); }',
     'void main(){',
     '  vec3 aTarget = aTargetQ * 2.0;',
     '  vec3 aScatter = aScatterQ * 4.5;',
@@ -525,17 +543,99 @@
     '  float fuzz = fract(aSeed.x*53.17) - 0.5;',
     '  vec3 tgt = aTarget + nm * (uSpread * fuzz + swell * uSwellAmp);',
     // --- the sun is alive ---
-    '  float prom = step(0.001, aExtra) * uSun;',            // prominence arcs
-    '  float cor = step(aExtra, -0.5) * uSun;',              // streaming corona dust
-    // boiling granulation: the whole surface simmers
-    '  float boil = sin(aTarget.x*14.0 + uTime*2.1 + a1) * sin(aTarget.y*13.0 - uTime*1.7 + a1*0.7) * sin(aTarget.z*15.0 + uTime*2.4);',
-    '  tgt += nm * boil * 0.02 * uSun;',
-    // fire flows along the arcs; they sway and breathe
-    '  float flow = sin(aExtra*24.0 - uTime*3.5 + a1*4.0);',
-    '  tgt += nm * flow * 0.03 * prom;',
-    // corona particles endlessly rise off the surface and are reborn
-    '  float corT = fract(uTime*0.06 + fract(aSeed.x*7.13));',
-    '  tgt += nm * corT * 0.5 * cor;',
+    // Nothing on the sun is baked static. Eight convection cells swing the
+    // surface back and forth and carry the baked structure with them; two
+    // octaves of value noise, sampled at the point *before* the swing so the
+    // granules ride the churn, boil the brightness; spicules jet off the limb;
+    // and three eruption slots, fed by uniforms, raise loops off the surface
+    // and hurl their tops into space. A particle whose slot is idle is dark.
+    '  float prom = 0.0;',           // 1 on eruption plasma
+    '  float cor = 0.0;',            // 1 on limb spicules
+    '  float sunHeat = 0.6;',        // photosphere temperature: brightness and colour
+    '  float sunLumMul = 1.0;',      // spicule brightness envelope
+    '  float promLum = 0.0;',        // eruption brightness
+    '  float promHeat = 1.0;',
+    '  float promFly = 0.0;',        // how far ejected plasma has flown: size and softness
+    '  if (uSun > 0.001) {',
+    '    cor = step(aExtra, -0.5);',
+    '    prom = step(0.95, aExtra);',
+    '    if (prom > 0.5) {',
+    // which slot: the integer part of aExtra minus one; along the arc: the fraction
+    '      vec4 fa = uFlareA[0]; vec4 fb = uFlareB[0]; vec4 fs = uFlareS[0];',
+    '      for (int i = 1; i < ' + FL_N + '; i++) { if (aExtra >= float(i) + 1.0) { fa = uFlareA[i]; fb = uFlareB[i]; fs = uFlareS[i]; } }',
+    '      float s = fract(aExtra);',
+    '      vec3 B = fa.xyz; vec3 T = fb.xyz; vec3 Nn = cross(B, T);',
+    // life: rise out of the surface, hold, sink back
+    '      float u = clamp(fs.x / fs.y, 0.0, 1.0);',
+    '      float alive = step(fs.x, fs.y);',
+    '      float rise = smoothstep(0.0, 0.2, u);',
+    '      float fall = 1.0 - smoothstep(0.62, 1.0, u);',
+    '      float lift = rise * fall * alive;',
+    // the arc: a great-circle span across the footpoints, arching to fb.w
+    '      float arch = sin(s * 3.14159265);',
+    '      vec3 o = aTarget;',                       // three random offsets across the tube, in [-1, 1]
+    '      float tube = (0.012 + 0.028 * arch) * (0.4 + 0.6 * lift);',
+    // eruptive ones balloon: after the rise the whole arch keeps climbing,
+    // fast at first, and swells sideways away from its anchored feet into a
+    // bulb, the tube thickening and thinning out as it stretches, the apex
+    // spraying ahead. A ballooned loop does not sink back — it fades where it
+    // is, while a calm one settles onto the surface again.
+    '      float ej = fs.z * alive * (1.0 - pow(1.0 - clamp((u - 0.3) / 0.6, 0.0, 1.0), 2.0));',
+    '      float th = (s - 0.5) * fa.w * (1.0 + ej * 2.5 * arch);',
+    '      vec3 dir = normalize(B * cos(th) + T * sin(th));',
+    '      float apx = (s - 0.5) * 4.0;',
+    '      promFly = ej * exp(-apx * apx);',
+    '      vec3 ep = dir * (1.0 + (fb.w * lift + ej * 0.55) * arch + promFly * (0.4 + 0.3 * o.y));',
+    '      ep += (Nn * o.x + T * o.z) * (tube + ej * 0.05 + promFly * 0.15) + dir * o.y * tube;',
+    '      ep += (Nn * sin(o.x * 3.1 + uTime * 1.5 + promFly * 6.0) + T * cos(o.z * 2.7 - uTime * 1.2 + promFly * 5.0)) * promFly * 0.07;',
+    '      tgt = ep;',
+    '      nm = normalize(ep);',
+    // plasma streams along the arc; the footpoints blaze; the first seconds flash
+    '      float flow = max(sin(s * 20.0 - uTime * 5.0 + o.z * 2.0), 0.0);',
+    '      float flash = exp(-u * 22.0) * alive;',
+    '      promLum = (lift * (0.5 + 0.5 * flow) * (1.0 + (1.0 - arch) * 1.2) + flash * (1.0 - arch) * 0.8) * (1.0 + promFly * 1.5) / (1.0 + ej * 0.5) * fs.w * 1.3;',
+    '      promHeat = 1.05 - arch * 0.25 - promFly * 0.1 + 0.2 * flow;',
+    '    } else {',
+    // convection: each cell swings on two incommensurate periods, so the churn
+    // never visibly repeats — and never winds the surface into spirals the way
+    // a one-way vortex would after a minute
+    '      vec3 sp = aTarget;',
+    '      for (int i = 0; i < ' + VORT_N + '; i++) {',
+    '        vec4 vc = uVortC[i]; vec4 vw = uVortW[i];',
+    '        vec3 dv = sp - vc.xyz;',
+    '        float ph = vw.w * exp(-dot(dv, dv) * vc.w) * (0.65 * sin(uTime * vw.x + vw.y) + 0.35 * sin(uTime * vw.z + vw.y * 2.7));',
+    '        float cph = cos(ph); float sph = sin(ph);',
+    '        sp = sp * cph + cross(vc.xyz, sp) * sph + vc.xyz * dot(vc.xyz, sp) * (1.0 - cph);',
+    '      }',
+    // granulation: the noise drifts *through* the surface, not along it, so
+    // cells are born and dissolve in place instead of sliding across the disc
+    '      vec3 gq = aTarget * 26.0;',
+    '      float g1 = noise3(gq + vec3(uTime * 0.55, uTime * 0.2, -uTime * 0.4));',
+    '      float g2 = noise3(gq * 2.3 + vec3(-uTime * 0.8, uTime * 1.1, uTime * 0.6));',
+    '      float gran = clamp((g1 * 0.65 + g2 * 0.35 - 0.5) * 2.2 + 0.5, 0.0, 1.0);',
+    '      float act = max(aExtra, 0.0);',           // active-region membership, baked
+    '      sunHeat = aShade * (0.6 + 0.9 * mix(gran, 0.5, act * 0.7));',   // the blaze is smoother than the quiet disc
+    // active regions: tangled loops shimmer fast and hot
+    '      sunHeat += act * (0.15 + 0.5 * g2) * (0.8 + 0.2 * sin(uTime * 6.0 + a1 * 9.0));',
+    // the surface flares where an eruption is breaking out, then smoulders under the loop
+    '      for (int i = 0; i < ' + FL_N + '; i++) {',
+    '        vec4 fs2 = uFlareS[i];',
+    '        float u2 = clamp(fs2.x / fs2.y, 0.0, 1.0);',
+    '        float on2 = step(fs2.x, fs2.y);',
+    '        float lift2 = smoothstep(0.0, 0.2, u2) * (1.0 - smoothstep(0.62, 1.0, u2)) * on2;',
+    '        float glow = fs2.w * (1.0 * exp(-fs2.x * 0.4) * min(fs2.x * 2.5, 1.0) * on2 + 0.3 * lift2);',
+    '        sunHeat += glow * exp((dot(nm, uFlareA[i].xyz) - 1.0) * 28.0);',
+    '      }',
+    // spicules: short jets off the limb, each on its own 2.5 s cycle, some taller
+    '      float spT = fract(uTime * 0.4 + fract(aSeed.x * 7.13));',
+    '      float spH = 0.03 + 0.09 * fract(aSeed.x * 3.71);',
+    '      sunLumMul = (1.0 - spT) * (1.0 - spT) * (0.7 + 0.6 * g2) * 1.6;',
+    '      sunHeat = mix(sunHeat, 0.7 + 0.35 * g2, cor);',
+    // the swung point; bright granules ride a little higher than dark lanes
+    '      nm = normalize(sp);',
+    '      tgt = sp + nm * (uSpread * fuzz + swell * uSwellAmp + (gran - 0.5) * 0.03 + spT * spH * cor);',
+    '    }',
+    '  }',
     '  vec3 p = uRot * (mix(scat, tgt, e) + wob);',
     '  vec3 n = uRot * nm;',
     // --- cursor interaction ---
@@ -592,15 +692,15 @@
     // specular highlight — wet gloss; normal slightly perturbed by the swell
     '  vec3 nS = normalize(n + vec3(sin(a1), cos(a1*1.3), sin(a1*2.1)) * 0.18 * swell);',
     '  lum += pow(max(dot(reflect(-L, nS), V), 0.0), 24.0) * uSpec * e * 1.6 * (1.0 - uSun);',
-    // the sun is self-luminous: no shadow side, limb darkening on the disc
-    // plus a thin glowing chromosphere rim right at the edge, slow breathing
-    '  float limb = 0.5 + 0.5*nv;',
-    '  float rimGlow = pow(1.0 - nv, 4.0) * 0.8;',
-    '  float ember = (aShade * mix(limb, 1.15, prom + cor) + rimGlow) * (0.95 + 0.25*sin(uTime*0.9 + a1*6.0));',
-    '  lum = mix(lum, ember * 1.2, uSun * e);',
-    // arcs pulse as fire runs along them; rising corona fades out
-    '  lum *= 1.0 + prom * (0.35 + 0.65*max(flow, 0.0));',
-    '  lum *= 1.0 - 0.6 * corT * cor;',
+    // the sun is self-luminous: no shadow side, a mild limb darkening keeps
+    // the disc reading as a sphere, a thin chromosphere rim glows at the edge
+    '  if (uSun > 0.001) {',
+    '    float limb = 0.72 + 0.28 * nv;',
+    '    float rimGlow = pow(1.0 - nv, 5.0) * 1.0;',
+    '    float disc = (1.0 - prom) * (1.0 - cor);',
+    '    float sl = disc * (sunHeat * limb * 2.4 + rimGlow) + cor * sunLumMul * sunHeat + prom * promLum;',
+    '    lum = mix(lum, sl, uSun * e);',
+    '  }',
     // city lights wake up on the night side of Earth
     '  float night = smoothstep(0.08, -0.3, dot(n, L));',
     '  float city = max(aExtra, 0.0) * night * uCity * e;',
@@ -634,6 +734,8 @@
     '  vec3 col = mix(base, vec3(1.0), fract(aSeed.x*29.31) * 0.35);',
     // surface color (Earth: green land, blue ocean) blends over the mode palette
     '  col = mix(col, aTint.rgb, aTint.w * e);',
+    // the sun: colour follows the live heat, not a baked tint
+    '  col = mix(col, fire(mix(sunHeat, promHeat, prom)), uSun * e);',
     // sodium-lamp gold for the city glow
     '  col = mix(col, vec3(1.0, 0.78, 0.45), min(1.0, city * 2.0));',
     // atmosphere: airy blue, warming to a sunset band along the terminator
@@ -658,13 +760,13 @@
     // the ratio on purpose: once a point stops growing, so does its share.
     '  float refPx = clamp(spanPx * uPxRef, 0.6, maxPx);',
     '  vCol *= refPx * refPx / (sizePx * sizePx);',
-    '  sizePx *= 1.0 + prom * 0.8 + cor * 0.5 + atmo * 5.0;',   // air blurs into a veil
+    '  sizePx *= 1.0 + prom * (0.4 + promFly * 0.6) + cor * 0.5 + atmo * 5.0;',   // air blurs into a veil; hurled plasma swells
     // depth of field: away from the focal plane points blur into bokeh discs —
     // bigger, softer, dimmer (light spread over a larger area)
     '  float coc = uDofPx * abs(w - uFocusW) / w;',
     '  float blurred = sqrt(sizePx*sizePx + coc*coc);',
     '  vCol *= sizePx*sizePx / (blurred*blurred);',
-    '  vSoft = max(coc / (coc + 3.0), atmo * 0.95);',
+    '  vSoft = max(coc / (coc + 3.0), max(atmo * 0.95, prom * (0.3 + promFly * 0.4)));',
     '  gl_PointSize = min(blurred, 72.0);',
     '}'
   ].join('\n');
@@ -714,6 +816,9 @@
   });
   U.uRipples = gl.getUniformLocation(prog, 'uRipples[0]');
   U.uRipAxis = gl.getUniformLocation(prog, 'uRipAxis[0]');
+  ['uFlareA', 'uFlareB', 'uFlareS', 'uVortC', 'uVortW'].forEach(function (n) {
+    U[n] = gl.getUniformLocation(prog, n + '[0]');
+  });
 
   // ---------- particles ----------
   // Capacity is not assumed, it is allocated: the buffers hold exactly what the
@@ -730,7 +835,7 @@
   var normal = new Float32Array(CHUNK * 3);
   var shadeArr = new Float32Array(CHUNK);
   var tintArr = new Float32Array(CHUNK * 4);   // w=0 → no override (plain shapes)
-  var extraArr = new Float32Array(CHUNK);      // sun: arc param / corona flag
+  var extraArr = new Float32Array(CHUNK);      // earth: city light; sun: activity / eruption slot / spicule
   var seed = new Float32Array(CHUNK * 2);
   // packed GPU copies: int16 positions, int8 normals, uint8 colors — ~45% less
   // vertex bandwidth than floats; the quantization step is far below a pixel
@@ -1059,132 +1164,111 @@
       }
     },
     sun: function (t, n, sh, ti, ex, i0, i1, seed) {
-      // Modeled after SDO imagery: a deep red-orange disc laced with dark
-      // filaments, blazing "fire seas" of concentrated flame, a glowing limb,
-      // and a handful of prominence loops on the rim.
+      // Modeled on SDO imagery. Only the slow structure is baked here: a
+      // mottled disc, dark snaking filament channels, a few sunspots and the
+      // blazing active regions. Everything that moves — the churn, the boiling
+      // granules, the spicules on the limb, the eruptions — lives in the
+      // shader, which reads the structure back through aShade and aExtra.
       var rng = mulberry32(seed);   // same features for every chunk
-      var arcs = [];
-      for (var a = 0; a < 5; a++) {
-        var base = randDirR(rng);
-        var rnd = randDirR(rng);
-        var tx = rnd[1]*base[2] - rnd[2]*base[1];
-        var ty = rnd[2]*base[0] - rnd[0]*base[2];
-        var tz = rnd[0]*base[1] - rnd[1]*base[0];
-        var tl = Math.sqrt(tx*tx + ty*ty + tz*tz) || 1;
-        arcs.push([base[0], base[1], base[2], tx/tl, ty/tl, tz/tl,
-                   0.3 + rng() * 0.35,     // angular span
-                   0.14 + rng() * 0.22,    // loop height
-                   0.02 + rng() * 0.02]);  // tube thickness
-      }
-      // -- surface texture: fine granulation + low-frequency dark filaments --
-      var waves = [];
+      var waves = [];                // mottling: the disc is patchy, never flat
       for (var wv = 0; wv < 6; wv++) {
         var wd = randDirR(rng);
-        var wf = 7 + rng() * 8;
+        var wf = 5 + rng() * 7;
         waves.push([wd[0]*wf, wd[1]*wf, wd[2]*wf, rng() * 6.283]);
       }
-      var fil = [];
-      for (var fv = 0; fv < 2; fv++) {
+      var fil = [];                  // filament channels: dark where a slow wave crosses zero
+      for (var fv = 0; fv < 3; fv++) {
         var fd = randDirR(rng);
-        var ff = 2.2 + rng() * 1.4;
+        var ff = 2.0 + rng() * 1.6;
         fil.push([fd[0]*ff, fd[1]*ff, fd[2]*ff, rng() * 6.283]);
       }
-      // -- fire seas: large lakes of concentrated flame + smaller hot tangles --
-      var act = [];
-      for (var av = 0; av < 2; av++) {
+      var act = [];                  // active regions: two big, four small, at the active latitudes
+      for (var av = 0; av < 6; av++) {
+        var big = av < 2;
         var alat = (rng() * 60 - 30) * 0.01745;
         var alon = rng() * 6.283;
         var acl = Math.cos(alat);
         act.push([acl*Math.cos(alon), Math.sin(alat), acl*Math.sin(alon),
-                  0.3 + rng() * 0.2, 0.85 + rng() * 0.35]);
-      }
-      for (av = 0; av < 3; av++) {
-        var blat = (rng() * 70 - 35) * 0.01745;
-        var blon = rng() * 6.283;
-        var bcl = Math.cos(blat);
-        act.push([bcl*Math.cos(blon), Math.sin(blat), bcl*Math.sin(blon),
-                  0.14 + rng() * 0.12, 0.55 + rng() * 0.4]);
+                  big ? 0.22 + rng() * 0.16 : 0.09 + rng() * 0.09,
+                  big ? 0.8 + rng() * 0.3 : 0.5 + rng() * 0.4]);
       }
       var spots = [];
-      for (var sp = 0; sp < 3; sp++) {
+      for (var sp = 0; sp < 4; sp++) {
         var slat = (rng() * 50 - 25) * 0.01745;
         var slon = rng() * 6.283;
         var scl = Math.cos(slat);
-        spots.push([scl*Math.cos(slon), Math.sin(slat), scl*Math.sin(slon), 0.05 + rng()*0.07]);
+        spots.push([scl*Math.cos(slon), Math.sin(slat), scl*Math.sin(slon), 0.02 + rng()*0.03]);
       }
       for (var i = i0; i < i1; i++) {
         var sel = Math.random();
-        var px, py, pz, r;
         if (sel < 0.06) {
-          // prominence loops swaying on the rim
-          var ar = arcs[(Math.random() * arcs.length) | 0];
-          var s = Math.random();
-          var ang = (s - 0.5) * ar[6];
-          var ca = Math.cos(ang), sa = Math.sin(ang);
-          var height = 1.0 + Math.sin(Math.PI * s) * ar[7];
-          var tube = ar[8] * (0.3 + 0.7 * Math.sin(Math.PI * s));
-          px = (ar[0]*ca + ar[3]*sa) * height + (Math.random() - 0.5) * tube * 2;
-          py = (ar[1]*ca + ar[4]*sa) * height + (Math.random() - 0.5) * tube * 2;
-          pz = (ar[2]*ca + ar[5]*sa) * height + (Math.random() - 0.5) * tube * 2;
-          var pl = Math.sqrt(px*px + py*py + pz*pz) || 1;
-          t[i*3] = px; t[i*3+1] = py; t[i*3+2] = pz;
-          n[i*3] = px/pl; n[i*3+1] = py/pl; n[i*3+2] = pz/pl;
-          sh[i] = 1.5 + Math.random() * 0.5;
-          ti[i*4] = 1.0; ti[i*4+1] = 0.42 + Math.random()*0.12; ti[i*4+2] = 0.14 + Math.random()*0.08; ti[i*4+3] = 0.95;
-          ex[i] = 0.05 + s * 0.95;
-        } else if (sel < 0.1) {
-          // faint red chromosphere fuzz hugging the limb
-          var d = randDir();
-          r = 1.01 + Math.pow(Math.random(), 2.0) * 0.07;
+          // eruption plasma: a slot, a place along the arc, three offsets
+          // across the tube. Where it stands is decided by the uniforms each
+          // frame; it stays dark until its slot erupts.
+          var slot = Math.min(FL_N - 1, (sel / 0.06 * FL_N) | 0);
+          t[i*3] = Math.random()*2 - 1; t[i*3+1] = Math.random()*2 - 1; t[i*3+2] = Math.random()*2 - 1;
+          n[i*3] = 0; n[i*3+1] = 0; n[i*3+2] = 1;
+          sh[i] = 1;
+          ti[i*4] = 1.0; ti[i*4+1] = 0.55; ti[i*4+2] = 0.2; ti[i*4+3] = 0.95;
+          ex[i] = 1 + slot + 0.002 + Math.random() * 0.996;
+          continue;
+        }
+        var d = randDir();
+        if (sel < 0.1) {
+          // spicules: a thin shell hugging the limb, jetting off it in the shader
+          var r = 1.003 + Math.pow(Math.random(), 2.0) * 0.02;
           t[i*3] = d[0]*r; t[i*3+1] = d[1]*r; t[i*3+2] = d[2]*r;
           n[i*3] = d[0]; n[i*3+1] = d[1]; n[i*3+2] = d[2];
-          sh[i] = 0.3 + Math.random() * 0.25;
-          ti[i*4] = 1.0; ti[i*4+1] = 0.32; ti[i*4+2] = 0.1; ti[i*4+3] = 0.92;
+          sh[i] = 0.7;
+          ti[i*4] = 1.0; ti[i*4+1] = 0.35; ti[i*4+2] = 0.1; ti[i*4+3] = 0.95;
           ex[i] = -1;
-        } else {
-          // the disc: ember-red base, dark snaking filaments, hot active tangles
-          var d2 = randDir();
-          r = 1.0 - Math.random() * 0.02;
-          var g = 0;
-          for (var w2 = 0; w2 < 6; w2++) {
-            var wa = waves[w2];
-            g += Math.sin(wa[0]*d2[0] + wa[1]*d2[1] + wa[2]*d2[2] + wa[3]);
-          }
-          var gn = g / 6 * 0.5 + 0.5;
-          var f1 = Math.sin(fil[0][0]*d2[0] + fil[0][1]*d2[1] + fil[0][2]*d2[2] + fil[0][3])
-                 + Math.sin(fil[1][0]*d2[0] + fil[1][1]*d2[1] + fil[1][2]*d2[2] + fil[1][3]);
-          var filF = 1 - 0.7 * Math.exp(-f1*f1*2.0);     // dark channels where the wave crosses zero
-          var spotF = 1;
-          for (var s2 = 0; s2 < spots.length; s2++) {
-            var spd = spots[s2];
-            var dot2 = d2[0]*spd[0] + d2[1]*spd[1] + d2[2]*spd[2];
-            if (dot2 < 0.98) continue;
-            var sa2 = Math.sqrt(Math.max(0, 2 * (1 - dot2)));
-            if (sa2 < spd[3]) {
-              var q2 = sa2 / spd[3];
-              spotF = Math.min(spotF, 0.3 + 0.7 * q2 * q2);
-            }
-          }
-          var hot = 0;
-          for (var a2 = 0; a2 < act.length; a2++) {
-            var ac = act[a2];
-            var adot = d2[0]*ac[0] + d2[1]*ac[1] + d2[2]*ac[2];
-            if (adot < 0.75) continue;
-            var aa = Math.sqrt(Math.max(0, 2 * (1 - adot)));
-            hot += Math.exp(-(aa*aa)/(ac[3]*ac[3])) * ac[4];
-          }
-          hot *= 0.5 + 0.9 * gn;                          // filamentary texture inside the blaze
-          var heat = Math.min(1.25, gn * 0.5 * filF * spotF + hot);
-          t[i*3] = d2[0]*r; t[i*3+1] = d2[1]*r; t[i*3+2] = d2[2]*r;
-          n[i*3] = d2[0]; n[i*3+1] = d2[1]; n[i*3+2] = d2[2];
-          sh[i] = 0.3 + heat * 1.7;
-          // fire ramp: ember red -> orange -> yellow-white only at the hottest
-          ti[i*4]   = Math.min(1, 0.4 + heat * 0.8);
-          ti[i*4+1] = 0.05 + heat * heat * 0.75;
-          ti[i*4+2] = Math.max(0, heat - 0.55) + 0.01;
-          ti[i*4+3] = 0.95;
-          ex[i] = 0;
+          continue;
         }
+        // the disc: patchy ember base, dark channels, sunspots, active regions
+        var r2 = 1.0 - Math.random() * 0.018;
+        var g = 0;
+        for (var w2 = 0; w2 < 6; w2++) {
+          var wa = waves[w2];
+          g += Math.sin(wa[0]*d[0] + wa[1]*d[1] + wa[2]*d[2] + wa[3]);
+        }
+        var gn = g / 6 * 0.5 + 0.5;
+        var filF = 1;
+        for (fv = 0; fv < 3; fv++) {
+          var fw = fil[fv];
+          var fz = Math.sin(fw[0]*d[0] + fw[1]*d[1] + fw[2]*d[2] + fw[3]);
+          filF *= 1 - 0.5 * Math.exp(-fz*fz*6);
+        }
+        var spotF = 1;
+        for (var s2 = 0; s2 < spots.length; s2++) {
+          var spd = spots[s2];
+          var dot2 = d[0]*spd[0] + d[1]*spd[1] + d[2]*spd[2];
+          if (dot2 < 0.98) continue;
+          var sa2 = Math.sqrt(Math.max(0, 2 * (1 - dot2)));
+          if (sa2 < spd[3]) {
+            var q2 = sa2 / spd[3];
+            spotF = Math.min(spotF, 0.5 + 0.5 * q2 * q2);
+          }
+        }
+        var hot = 0;
+        for (var a2 = 0; a2 < act.length; a2++) {
+          var ac = act[a2];
+          var adot = d[0]*ac[0] + d[1]*ac[1] + d[2]*ac[2];
+          if (adot < 0.75) continue;
+          var aa = Math.sqrt(Math.max(0, 2 * (1 - adot)));
+          hot += Math.exp(-(aa*aa)/(ac[3]*ac[3])) * ac[4];
+        }
+        hot *= 0.55 + 0.9 * gn;                         // loops tangle inside the blaze
+        var heat = Math.min(1.5, (0.5 + 0.35 * gn) * filF * spotF + hot);
+        t[i*3] = d[0]*r2; t[i*3+1] = d[1]*r2; t[i*3+2] = d[2]*r2;
+        n[i*3] = d[0]; n[i*3+1] = d[1]; n[i*3+2] = d[2];
+        sh[i] = heat;
+        // the baked fire colour only shows for the moment the sun fades in;
+        // after that the shader colours by live heat
+        ti[i*4]   = Math.min(1, 0.35 + heat * 0.85);
+        ti[i*4+1] = Math.min(1, 0.03 + heat * heat * 0.5);
+        ti[i*4+2] = Math.max(0, Math.min(1, (heat - 0.75) * 1.1));
+        ti[i*4+3] = 0.95;
+        ex[i] = Math.min(0.9, hot * 1.1);               // activity: the shader shimmers it (eruptions start at 1)
       }
     },
     saturn: function (t, n, sh, ti, ex, i0, i1) {
@@ -1365,6 +1449,69 @@
   // cost hundreds of MB, and generation hides inside the cloud phase anyway
   var shape = 'earth', pendingShape = null;
   var preSun = null;   // user's size/count remembered while the sun preset is active
+
+  // ---------- the sun: eruptions and convection ----------
+  // Eruptions live in three slots the shader reads as uniforms: where the loop
+  // stands, which way it arches, how old it is. A new one breaks out every
+  // minute or so on the limb that is turning into view — seen first in
+  // silhouette, then carried across the disc. Most blow their top off; the
+  // rest just rise, glow, and sink back.
+  var flA = new Float32Array(FL_N * 4), flB = new Float32Array(FL_N * 4), flS = new Float32Array(FL_N * 4);
+  var flares = [];
+  for (var fi0 = 0; fi0 < FL_N; fi0++) {
+    flares.push({ age: 1, dur: 0, erupt: 0, str: 0 });
+    flA[fi0*4+1] = 1; flA[fi0*4+3] = 0.3;   // a valid frame even while idle: normalize(0) would be NaN
+    flB[fi0*4] = 1; flB[fi0*4+3] = 0.2;
+  }
+  var nextFlare = 0;   // seconds (performance.now clock) of the next outbreak
+  function eruptFlare() {
+    var slot = -1;
+    for (var i = 0; i < FL_N; i++) if (flares[i].age >= flares[i].dur) { slot = i; break; }
+    if (slot < 0) return;
+    // the limb turning into view, in model space: where the camera will point
+    // in a moment, minus where it points now
+    var camM = rotApplyT(mat3RotXY(pitch, yaw), [0, 0, 1]);
+    var camF = rotApplyT(mat3RotXY(pitch, yaw + 0.9), [0, 0, 1]);
+    var cd = camF[0]*camM[0] + camF[1]*camM[1] + camF[2]*camM[2];
+    var lx = camF[0] - camM[0]*cd, ly = camF[1] - camM[1]*cd, lz = camF[2] - camM[2]*cd;
+    var ll = Math.sqrt(lx*lx + ly*ly + lz*lz) || 1;
+    var rd = randDir();
+    var over = Math.random() * 0.7 - 0.2;    // mostly on the limb, now and then out over the disc
+    var bx = lx/ll + camM[0]*over + rd[0]*0.35;
+    var by = ly/ll + camM[1]*over + rd[1]*0.35;
+    var bz = lz/ll + camM[2]*over + rd[2]*0.35;
+    // eruptions belong to the active latitudes, not the poles
+    by = Math.max(-0.6, Math.min(0.6, by));
+    var bl = Math.sqrt(bx*bx + by*by + bz*bz) || 1;
+    bx /= bl; by /= bl; bz /= bl;
+    // the arc plane: any direction across the footpoints
+    var td = randDir();
+    var tx = td[1]*bz - td[2]*by, ty = td[2]*bx - td[0]*bz, tz = td[0]*by - td[1]*bx;
+    var tl = Math.sqrt(tx*tx + ty*ty + tz*tz) || 1;
+    var erupt = Math.random() < 0.65 ? 1 : 0;
+    var F = flares[slot];
+    F.age = 0; F.dur = 18 + Math.random() * 10; F.erupt = erupt; F.str = 0.8 + Math.random() * 0.5;
+    flA[slot*4] = bx; flA[slot*4+1] = by; flA[slot*4+2] = bz;
+    flA[slot*4+3] = 0.28 + Math.random() * 0.3;
+    flB[slot*4] = tx/tl; flB[slot*4+1] = ty/tl; flB[slot*4+2] = tz/tl;
+    flB[slot*4+3] = erupt ? 0.25 + Math.random() * 0.25 : 0.14 + Math.random() * 0.16;
+  }
+  function quenchFlares() {
+    for (var i = 0; i < FL_N; i++) { flares[i].age = 1; flares[i].dur = 0; }
+  }
+  // convection cells: laid out fresh for every sun
+  var vortC = new Float32Array(VORT_N * 4), vortW = new Float32Array(VORT_N * 4);
+  function seedVortices(rng) {
+    for (var i = 0; i < VORT_N; i++) {
+      var c = randDirR(rng);
+      var sig = 0.35 + rng() * 0.3;            // cell radius, chord units (about 20-40°)
+      vortC[i*4] = c[0]; vortC[i*4+1] = c[1]; vortC[i*4+2] = c[2]; vortC[i*4+3] = 1 / (sig * sig);
+      vortW[i*4] = 0.2 + rng() * 0.25;         // main swing: a 14-31 s period
+      vortW[i*4+1] = rng() * 6.283;
+      vortW[i*4+2] = 0.06 + rng() * 0.1;       // a slower swing underneath it
+      vortW[i*4+3] = 0.35 + rng() * 0.35;      // swing amplitude, rad
+    }
+  }
   function applySizeCount(size, count) {
     count = Math.min(count, N);   // never draw past what is allocated
     SET.size = size; resize();
@@ -1391,6 +1538,12 @@
       preSun = null;
     }
     genJob = { name: name, i: 0, seed: (Math.random() * 1e9) | 0 };
+    quenchFlares();
+    if (name === 'sun') {
+      seedVortices(mulberry32(genJob.seed ^ 0x9E3779B9));
+      // the first eruption comes a few seconds after the disc has formed
+      nextFlare = performance.now() / 1000 + DUR[PH_CLOUD] + DUR[PH_ASSEMBLE] + 3 + Math.random() * 4;
+    }
     if (reducedMotion) pumpShapeJob(1e9);   // no cloud phase to hide it in
   }
   function pumpShapeJob(budgetMs) {
@@ -1945,6 +2098,8 @@
       'shape ' + shape + '  ·  mode ' + mode + '  ·  phase ' + phaseNames[phase] + '\n' +
       'touch ' + (dbgLive ? 'active' : 'idle') + '  ·  waves alive ' + dbgLive + '/' + RIPPLES + '  ·  repulse ' + repulse.toFixed(3) + '\n' +
       'gen job ' + (genJob ? Math.round(genJob.i / N * 100) + '% ' + genJob.name : 'none') + '\n' +
+      (shape === 'sun' ? 'eruptions ' + flares.filter(function (F) { return F.age < F.dur; }).length + ' live  ·  next in ' +
+        Math.max(0, Math.round(nextFlare - performance.now() / 1000)) + ' s\n' : '') +
       'gpu ' + dbgRenderer;
     dbgTimes.length = 0;
   }
@@ -2157,6 +2312,22 @@
     gl.uniform1f(U.uFocusW, dist - 1.15 + SET.focus * 2.3);
     sunAmt += ((shape === 'sun' ? 1 : 0) - sunAmt) * (1 - Math.exp(-2.5 * dt));
     gl.uniform1f(U.uSun, sunAmt);
+    // the sun's eruptions: age the live ones, and break a new one out every
+    // minute or so once the disc is standing
+    if (shape === 'sun' && phase === PH_HOLD && t >= nextFlare) {
+      eruptFlare();
+      nextFlare = t + 32 + Math.random() * 40;
+    }
+    for (var fl = 0; fl < FL_N; fl++) {
+      var F = flares[fl];
+      if (F.age < F.dur) F.age += dt;
+      flS[fl*4] = F.age; flS[fl*4+1] = Math.max(F.dur, 1e-3); flS[fl*4+2] = F.erupt; flS[fl*4+3] = F.str;
+    }
+    gl.uniform4fv(U.uFlareA, flA);
+    gl.uniform4fv(U.uFlareB, flB);
+    gl.uniform4fv(U.uFlareS, flS);
+    gl.uniform4fv(U.uVortC, vortC);
+    gl.uniform4fv(U.uVortW, vortW);
     gl.uniform1f(U.uYOff, yOff);
     gl.uniform1f(U.uCity, cityAmtU);
     gl.uniform1f(U.uAtmo, atmoAmt);

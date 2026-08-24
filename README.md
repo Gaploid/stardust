@@ -12,8 +12,9 @@ Saturn, the Sun, or a cube — and you can stir them with your cursor.
 - **Shapes** — Earth (real coastlines, city lights, ETOPO1 sea floor), the Moon
   (real LROC albedo and mineral color), Jupiter (Cassini's cylindrical map, read
   back in enhanced colour), Saturn (real body and ring textures, incl. the
-  Cassini division), the Sun (procedural, modeled on SDO imagery: filaments,
-  fire seas, prominence loops), plus a cube. Switching scatters the particles
+  Cassini division), the Sun (procedural, modeled on SDO imagery: a boiling
+  surface, filament channels, active regions, and prominences that erupt off
+  the limb every minute or so), plus a cube. Switching scatters the particles
   into a cloud and reassembles them.
 - **Render modes** — *water* (liquid surface with swell and specular glints),
   *particles* (crisp film-grain points), *fog* (volumetric puffs).
@@ -48,7 +49,11 @@ The same list is in the page itself, behind **credits** in the top-right corner.
 | Saturn rings | NASA Cassini-derived texture | 128 radial samples × RGBA | 512 B |
 | The sky | Yale Bright Star Catalogue, 5th ed. | 5080 stars × 6 B | 30 KB |
 
-The Sun uses no map — it is generated procedurally.
+The Sun uses no map — it is generated procedurally. Only the slow structure
+(filament channels, sunspots, active regions) is baked into the particles;
+everything that moves — the convective churn, the boiling granulation, the
+spicules on the limb, the eruptions — is computed in the vertex shader every
+frame, so nothing on it stands still.
 
 The starfield is the real one: every star down to magnitude 6, each carrying its
 right ascension, declination, visual magnitude and B-V colour index in six bytes.
