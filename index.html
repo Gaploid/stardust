@@ -176,9 +176,62 @@
     #hud-stat { bottom: 12px; right: 16px; }
     #hud-debug { bottom: 44px; left: 16px; max-width: calc(100vw - 32px); white-space: pre-wrap; }
   }
+  /* ---------- loading screen ---------- */
+  #loader {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    background: #04060a;
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: #66788c;
+    user-select: none;
+    transition: opacity 0.55s ease;
+  }
+  #loader.done { opacity: 0; pointer-events: none; }
+  #ld-name {
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.3em;
+    text-indent: 0.3em;        /* letter-spacing pads the right edge — recenter */
+    text-transform: uppercase;
+    color: #c2d4e6;
+  }
+  #ld-track {
+    position: relative;
+    width: min(300px, 62vw);
+    height: 1px;
+    background: #1b2632;
+    overflow: hidden;
+  }
+  #ld-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 0;
+    background: linear-gradient(90deg, #2f4a68, #c2d4e6);
+    transition: width 0.2s linear;
+  }
+  #ld-line {
+    display: flex;
+    gap: 16px;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+  #ld-pct { color: #9db0c4; font-variant-numeric: tabular-nums; }
+  /* the HUD stays dark until the world is ready */
+  .hud { transition: opacity 0.7s ease 0.1s; }
+  body.loading .hud { opacity: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    #loader, #ld-fill, .hud { transition: none; }
+  }
 </style>
 </head>
-<body>
+<body class="loading">
 
 <canvas id="stage"></canvas>
 <div class="hud" id="hud-title"><strong>Stardust</strong><span id="hud-sub">initializing…</span></div>
@@ -223,16 +276,82 @@
 <div class="hud" id="hud-help">hover — touch &nbsp;·&nbsp; drag — rotate &nbsp;·&nbsp; click — scatter &nbsp;·&nbsp; wheel — zoom</div>
 <div class="hud" id="hud-stat"><span id="hud-phase">forming</span><br><span id="hud-fps"></span></div>
 <div id="fallback">WebGL is not available in this browser —<br>the animation cannot be shown.</div>
+<div id="loader">
+  <div id="ld-name">Stardust</div>
+  <div id="ld-track"><div id="ld-fill"></div></div>
+  <div id="ld-line"><span id="ld-step">starting</span><span id="ld-pct">0%</span></div>
+</div>
 
 <script>
 (function () {
   'use strict';
+
+  // ---------- loading screen ----------
+  // Boot is not cheap: shaders, 2M particles, ~70 MB of vertex buffers. It runs
+  // in time-boxed slices behind this screen so the tab never locks up, and the
+  // bar tracks real work instead of a guessed duration.
+  var loaderEl = document.getElementById('loader');
+  document.body.classList.add('loading');   // also when a host supplies its own <body>
+  var ldFill = document.getElementById('ld-fill');
+  var ldStep = document.getElementById('ld-step');
+  var ldPct = document.getElementById('ld-pct');
+  // ms of JS per frame while loading: nothing animates behind the screen but
+  // the progress bar, so the budget can be far fatter than a render frame
+  var LD_SLICE = 24;
+
+  function ldSet(frac, label) {
+    if (label) ldStep.textContent = label;
+    ldFill.style.width = (frac * 100).toFixed(1) + '%';
+    ldPct.textContent = Math.round(frac * 100) + '%';
+  }
+  function ldHide() {
+    loaderEl.classList.add('done');
+    document.body.classList.remove('loading');
+    setTimeout(function () {
+      if (loaderEl.parentNode) loaderEl.parentNode.removeChild(loaderEl);
+    }, 700);
+  }
+  // Steps are { label, n, chunk, run(i0, i1) }. The chunk size adapts after
+  // every call so one call lands near half the budget on any machine.
+  function runBoot(steps, done) {
+    var total = 0;
+    for (var k = 0; k < steps.length; k++) total += steps[k].n;
+    var si = 0, cur = 0, doneUnits = 0, chunk = steps[0].chunk;
+    function tick() {
+      var t0 = performance.now();
+      while (si < steps.length) {
+        var st = steps[si];
+        if (!st.announced) {
+          // name the step first and work on it next frame — otherwise a long
+          // step only gets its label once it is already over
+          st.announced = true;
+          ldSet(doneUnits / total, st.label);
+          break;
+        }
+        var i1 = Math.min(st.n, cur + chunk);
+        var c0 = performance.now();
+        st.run(cur, i1);
+        var took = performance.now() - c0;
+        doneUnits += i1 - cur;
+        cur = i1;
+        if (took > 0.2) chunk = Math.max(1024, Math.min(st.n, Math.round(chunk * LD_SLICE * 0.5 / took)));
+        if (cur >= st.n) { si++; cur = 0; if (si < steps.length) chunk = steps[si].chunk; }
+        if (performance.now() - t0 >= LD_SLICE) break;
+      }
+      ldSet(doneUnits / total);
+      if (si < steps.length) requestAnimationFrame(tick);
+      else done();
+    }
+    // two frames: the first paints the loader, the next starts eating the work
+    requestAnimationFrame(function () { requestAnimationFrame(tick); });
+  }
 
   var canvas = document.getElementById('stage');
   var gl = canvas.getContext('webgl', { antialias: false, alpha: false, depth: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' })
         || canvas.getContext('experimental-webgl');
   if (!gl) {
     document.getElementById('fallback').style.display = 'flex';
+    ldHide();
     return;
   }
 
@@ -503,17 +622,20 @@
   var tgtQ = new Int16Array(N * 3), nrmQ = new Int8Array(N * 3), tintQ = new Uint8Array(N * 4);
   var scatQ = new Int16Array(N * 3);
 
-  for (var i = 0; i < N; i++) {
-    // scattered cloud: a wide shell around the shape (shared by all shapes)
-    var u2 = Math.random() * 2 - 1;
-    var phi2 = Math.random() * Math.PI * 2;
-    var s2 = Math.sqrt(1 - u2 * u2);
-    var rad = 1.7 + Math.pow(Math.random(), 0.7) * 2.6;
-    scatQ[i*3]   = Math.round(s2 * Math.cos(phi2) * rad / 4.5 * 32767);
-    scatQ[i*3+1] = Math.round(u2 * rad / 4.5 * 32767);
-    scatQ[i*3+2] = Math.round(s2 * Math.sin(phi2) * rad / 4.5 * 32767);
-    seed[i*2]   = Math.random();
-    seed[i*2+1] = 0.6 + Math.pow(Math.random(), 2.0) * 1.9;
+  // the scattered cloud: a wide shell around the shape, shared by all shapes —
+  // ranged like the generators so boot can fill it a slice at a time
+  function fillScatter(i0, i1) {
+    for (var i = i0; i < i1; i++) {
+      var u2 = Math.random() * 2 - 1;
+      var phi2 = Math.random() * Math.PI * 2;
+      var s2 = Math.sqrt(1 - u2 * u2);
+      var rad = 1.7 + Math.pow(Math.random(), 0.7) * 2.6;
+      scatQ[i*3]   = Math.round(s2 * Math.cos(phi2) * rad / 4.5 * 32767);
+      scatQ[i*3+1] = Math.round(u2 * rad / 4.5 * 32767);
+      scatQ[i*3+2] = Math.round(s2 * Math.sin(phi2) * rad / 4.5 * 32767);
+      seed[i*2]   = Math.random();
+      seed[i*2+1] = 0.6 + Math.pow(Math.random(), 2.0) * 1.9;
+    }
   }
 
   function randDir() {
@@ -987,7 +1109,6 @@
       }
     }
   };
-  GEN.earth(target, normal, shadeArr, tintArr, extraArr, 0, N, 1);   // Earth is the default shape
 
   // signed distance fields matching the generators — used to find the
   // actual touch point on the current shape (ray marching from the camera)
@@ -1023,7 +1144,7 @@
   function bindAttr(name, data, size, type, norm) {
     var buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, data.byteLength, gl.STATIC_DRAW);   // filled in slices
     var loc = gl.getAttribLocation(prog, name);
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, size, type, norm, 0, 0);
@@ -1037,14 +1158,17 @@
     }
     for (k = i0 * 4; k < i1 * 4; k++) tintQ[k] = Math.max(0, Math.min(255, Math.round(tintArr[k] * 255)));
   }
-  packRange(0, N);
   var bufTarget = bindAttr('aTargetQ', tgtQ, 3, gl.SHORT, true);
   var bufNormal = bindAttr('aNormal', nrmQ, 3, gl.BYTE, true);
   var bufShade = bindAttr('aShade', shadeArr, 1, gl.FLOAT, false);
   var bufTint = bindAttr('aTint', tintQ, 4, gl.UNSIGNED_BYTE, true);
   var bufExtra = bindAttr('aExtra', extraArr, 1, gl.FLOAT, false);
-  bindAttr('aScatterQ', scatQ, 3, gl.SHORT, true);
-  bindAttr('aSeed', seed, 2, gl.FLOAT, false);
+  var bufScatter = bindAttr('aScatterQ', scatQ, 3, gl.SHORT, true);
+  var bufSeed = bindAttr('aSeed', seed, 2, gl.FLOAT, false);
+  function uploadCloud(i0, i1) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufScatter); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 6, scatQ.subarray(i0 * 3, i1 * 3));
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufSeed); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 8, seed.subarray(i0 * 2, i1 * 2));
+  }
   function uploadRange(i0, i1) {
     packRange(i0, i1);
     gl.bindBuffer(gl.ARRAY_BUFFER, bufTarget); gl.bufferSubData(gl.ARRAY_BUFFER, i0 * 6, tgtQ.subarray(i0 * 3, i1 * 3));
@@ -1760,7 +1884,19 @@
       if (dbgPanel.hidden) dbgTimes.length = 0; else dbgUpdate();
     }
   }
-  requestAnimationFrame(frame);
+  runBoot([
+    { label: 'scattering ' + fmt(N) + ' particles', n: N, chunk: 40000, run: function (i0, i1) {
+        fillScatter(i0, i1);
+        uploadCloud(i0, i1);
+      } },
+    { label: 'forming earth', n: N, chunk: 20000, run: function (i0, i1) {
+        GEN.earth(target, normal, shadeArr, tintArr, extraArr, i0, i1, 1);
+        uploadRange(i0, i1);
+      } }
+  ], function () {
+    ldHide();
+    requestAnimationFrame(frame);
+  });
 })();
 </script>
 
