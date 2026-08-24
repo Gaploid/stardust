@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Up to 2 million WebGL particles assemble into Earth, the Moon, a cube, a torus, or a sphere. Water, particle, and fog modes; stir the surface with your cursor. Real NASA and NOAA maps.">
+<meta name="description" content="Up to 2 million WebGL particles assemble into the Sun, Earth, the Moon, a cube, a torus, or a sphere. Water, particle, and fog modes; stir the surface with your cursor. Real NASA and NOAA maps.">
 <meta property="og:title" content="Stardust">
 <meta property="og:description" content="2M WebGL particles form planets you can stir with your cursor.">
 <meta property="og:type" content="website">
@@ -159,6 +159,7 @@
 <div class="hud" id="hud-shape">
   <button data-shape="earth" class="on">earth</button>
   <button data-shape="moon">moon</button>
+  <button data-shape="sun">sun</button>
   <button data-shape="cube">cube</button>
   <button data-shape="torus">torus</button>
   <button data-shape="sphere">sphere</button>
@@ -204,6 +205,7 @@
     'attribute vec3 aNormal;',      // surface normal of the shape (lighting, swell, waves)
     'attribute float aShade;',      // per-point brightness of the shape (continents vs oceans)
     'attribute vec4 aTint;',        // rgb — surface color, w — how much it overrides the palette
+    'attribute float aExtra;',      // shape extra: >0 — prominence arc param, -1 — corona dust
     'attribute vec3 aScatter;',
     'attribute vec2 aSeed;',        // x: randomness (delay, twinkle, color), y: size
     'uniform mat3 uRot;',
@@ -240,6 +242,7 @@
     'uniform float uHand;',         // touch radius multiplier ("hand size")
     'uniform float uDofPx;',        // depth-of-field strength (max blur circle, px)
     'uniform float uFocusW;',       // view depth of the focal plane (slides through the object)
+    'uniform float uSun;',          // 1 when the sun is active: self-luminous boiling plasma
     'varying vec3 vCol;',
     'varying float vSoft;',         // extra per-particle softness from defocus
     'float hash(float n){ return fract(sin(n)*43758.5453123); }',
@@ -260,6 +263,18 @@
     '  float swell = sin(aTarget.x*5.0 + aTarget.y*3.0 + uTime*1.1) + 0.8*sin(aTarget.z*4.0 - aTarget.x*2.0 + uTime*0.7);',
     '  float fuzz = fract(aSeed.x*53.17) - 0.5;',
     '  vec3 tgt = aTarget + nm * (uSpread * fuzz + swell * uSwellAmp);',
+    // --- the sun is alive ---
+    '  float prom = step(0.001, aExtra) * uSun;',            // prominence arcs
+    '  float cor = step(aExtra, -0.5) * uSun;',              // streaming corona dust
+    // boiling granulation: the whole surface simmers
+    '  float boil = sin(aTarget.x*14.0 + uTime*2.1 + a1) * sin(aTarget.y*13.0 - uTime*1.7 + a1*0.7) * sin(aTarget.z*15.0 + uTime*2.4);',
+    '  tgt += nm * boil * 0.02 * uSun;',
+    // fire flows along the arcs; they sway and breathe
+    '  float flow = sin(aExtra*24.0 - uTime*3.5 + a1*4.0);',
+    '  tgt += nm * flow * 0.03 * prom;',
+    // corona particles endlessly rise off the surface and are reborn
+    '  float corT = fract(uTime*0.06 + fract(aSeed.x*7.13));',
+    '  tgt += nm * corT * 0.5 * cor;',
     '  vec3 p = uRot * (mix(scat, tgt, e) + wob);',
     '  vec3 n = uRot * nm;',
     // --- cursor interaction ---
@@ -310,10 +325,17 @@
     '  lum *= mix(1.0, aShade, e);',
     // specular highlight — wet gloss; normal slightly perturbed by the swell
     '  vec3 nS = normalize(n + vec3(sin(a1), cos(a1*1.3), sin(a1*2.1)) * 0.18 * swell);',
-    '  lum += pow(max(dot(reflect(-L, nS), V), 0.0), 24.0) * uSpec * e * 1.6;',
-    // depth fade: the far side is dimmer
+    '  lum += pow(max(dot(reflect(-L, nS), V), 0.0), 24.0) * uSpec * e * 1.6 * (1.0 - uSun);',
+    // the sun is self-luminous: no shadow side, real limb darkening, slow breathing
+    '  float limb = 0.5 + 0.5*abs(dot(n, V));',
+    '  float ember = aShade * mix(limb, 1.15, prom + cor) * (0.95 + 0.25*sin(uTime*0.9 + a1*6.0));',
+    '  lum = mix(lum, ember * 1.2, uSun * e);',
+    // arcs pulse as fire runs along them; rising corona fades out
+    '  lum *= 1.0 + prom * (0.35 + 0.65*max(flow, 0.0));',
+    '  lum *= 1.0 - 0.6 * corT * cor;',
+    // depth fade: the far side is dimmer (softer for the glowing sun)
     '  float depth = clamp((p.z + 1.6) / 3.2, 0.0, 1.0);',
-    '  lum *= 0.4 + 0.6*depth;',
+    '  lum *= mix(0.4 + 0.6*depth, 0.85 + 0.15*depth, uSun);',
     '  lum *= mix(1.0, 0.4, ambient);',
     // glints on swell crests, like a moon path on water
     '  lum *= 1.0 + max(swell, 0.0) * uSwellAmp * 7.5 * e;',
@@ -333,6 +355,7 @@
     '  vCol = col * lum * tw;',
     '  float pMul = mix(1.0, mix(0.55, 6.0, puffSel), uPuff);',
     '  float sizePx = clamp(aSeed.y * uPxScale * uSizeMul * pMul / w, 0.6, mix(4.0 * uSizeMul, 64.0, uPuff));',
+    '  sizePx *= 1.0 + prom * 0.8 + cor * 0.5;',   // plasma blobs are chunkier
     // depth of field: away from the focal plane points blur into bokeh discs —
     // bigger, softer, dimmer (light spread over a larger area)
     '  float coc = uDofPx * abs(w - uFocusW) / w;',
@@ -383,7 +406,7 @@
   var U = {};
   ['uRot','uScatRot','uTime','uAssemble','uDist','uAspect','uPxScale','uTwinkle','uAlpha','uRepulse',
    'uPal0','uPal1','uPal2','uPal3','uSwellAmp','uLift','uPush','uRipSpeed','uRipWidth','uSpread','uSizeMul',
-   'uSoft','uPuff','uSwirl','uTurb','uDrag','uSpec','uMoveVel','uCursorPos','uFovF','uHand','uDofPx','uFocusW'].forEach(function (n) {
+   'uSoft','uPuff','uSwirl','uTurb','uDrag','uSpec','uMoveVel','uCursorPos','uFovF','uHand','uDofPx','uFocusW','uSun'].forEach(function (n) {
     U[n] = gl.getUniformLocation(prog, n);
   });
   U.uRipples = gl.getUniformLocation(prog, 'uRipples[0]');
@@ -394,7 +417,8 @@
   var target = new Float32Array(N * 3);
   var normal = new Float32Array(N * 3);
   var shadeArr = new Float32Array(N);
-  var tintArr = new Float32Array(N * 4);   // zeros = no override (non-Earth shapes)
+  var tintArr = new Float32Array(N * 4);   // w=0 → no override (plain shapes)
+  var extraArr = new Float32Array(N);      // sun: arc param / corona flag
   var scatter = new Float32Array(N * 3);
   var seed = new Float32Array(N * 2);
 
@@ -490,17 +514,17 @@
 
   // ---------- shape generators ----------
   var GEN = {
-    sphere: function (t, n, sh) {
+    sphere: function (t, n, sh, ti, ex) {
       for (var i = 0; i < N; i++) {
         var d = randDir();
         // 85% — thin shell, 15% — sparse dust in the volume
         var r = (Math.random() < 0.85) ? 1.0 - Math.random() * 0.035 : Math.cbrt(Math.random());
         t[i*3] = d[0]*r; t[i*3+1] = d[1]*r; t[i*3+2] = d[2]*r;
         n[i*3] = d[0]; n[i*3+1] = d[1]; n[i*3+2] = d[2];
-        sh[i] = 1;
+        sh[i] = 1; ti[i*4+3] = 0; ex[i] = 0;   // arrays are shared: clear overrides
       }
     },
-    torus: function (t, n, sh) {
+    torus: function (t, n, sh, ti, ex) {
       var R = 0.72, r0 = 0.34;
       for (var i = 0; i < N; i++) {
         var th = Math.random() * Math.PI * 2;
@@ -513,10 +537,10 @@
         t[i*3+1] = rr * sp;
         t[i*3+2] = (R + rr * cp) * st;
         n[i*3] = cp * ct; n[i*3+1] = sp; n[i*3+2] = cp * st;
-        sh[i] = 1;
+        sh[i] = 1; ti[i*4+3] = 0; ex[i] = 0;
       }
     },
-    earth: function (t, n, sh, ti) {
+    earth: function (t, n, sh, ti, ex) {
       for (var i = 0; i < N; i++) {
         var d = randDir();
         var lat = Math.asin(Math.max(-1, Math.min(1, d[1]))) * 57.29578 + (Math.random() - 0.5) * 0.8;
@@ -559,9 +583,10 @@
         n[i*3] = d[0]; n[i*3+1] = d[1]; n[i*3+2] = d[2];
         sh[i] = shv;
         ti[i*4] = cr; ti[i*4+1] = cg; ti[i*4+2] = cb; ti[i*4+3] = cw;
+        ex[i] = 0;
       }
     },
-    moon: function (t, n, sh, ti) {
+    moon: function (t, n, sh, ti, ex) {
       // brightness comes from the real NASA LROC albedo map (maria, Tycho rays,
       // bright highlands); procedural craters only add surface relief
       var craters = [];
@@ -601,9 +626,101 @@
         ti[i*4+1] = grey * (0.93 + wrm * 0.07);
         ti[i*4+2] = grey * (1.10 - wrm * 0.32);
         ti[i*4+3] = 0.85;
+        ex[i] = 0;
       }
     },
-    cube: function (t, n, sh) {
+    sun: function (t, n, sh, ti, ex) {
+      // prominences: plasma loops anchored on the surface along great circles
+      var arcs = [];
+      for (var a = 0; a < 8; a++) {
+        var base = randDir();
+        var rnd = randDir();
+        var tx = rnd[1]*base[2] - rnd[2]*base[1];
+        var ty = rnd[2]*base[0] - rnd[0]*base[2];
+        var tz = rnd[0]*base[1] - rnd[1]*base[0];
+        var tl = Math.sqrt(tx*tx + ty*ty + tz*tz) || 1;
+        arcs.push([base[0], base[1], base[2], tx/tl, ty/tl, tz/tl,
+                   0.25 + Math.random() * 0.5,     // angular span
+                   0.12 + Math.random() * 0.42,    // loop height
+                   0.02 + Math.random() * 0.028]); // tube thickness
+      }
+      // granulation baked from random plane waves; sunspot pairs near the equator
+      var waves = [];
+      for (var wv = 0; wv < 6; wv++) {
+        var wd = randDir();
+        var wf = 7 + Math.random() * 8;
+        waves.push([wd[0]*wf, wd[1]*wf, wd[2]*wf, Math.random() * 6.283]);
+      }
+      var spots = [];
+      for (var sp = 0; sp < 5; sp++) {
+        var slat = (Math.random() * 50 - 25) * 0.01745;
+        var slon = Math.random() * 6.283;
+        var scl = Math.cos(slat);
+        spots.push([scl*Math.cos(slon), Math.sin(slat), scl*Math.sin(slon), 0.06 + Math.random()*0.09]);
+      }
+      for (var i = 0; i < N; i++) {
+        var sel = Math.random();
+        var px, py, pz, r;
+        if (sel < 0.10) {
+          // prominence arc
+          var ar = arcs[(Math.random() * arcs.length) | 0];
+          var s = Math.random();
+          var ang = (s - 0.5) * ar[6];
+          var ca = Math.cos(ang), sa = Math.sin(ang);
+          var height = 1.0 + Math.sin(Math.PI * s) * ar[7];
+          var tube = ar[8] * (0.3 + 0.7 * Math.sin(Math.PI * s));
+          px = (ar[0]*ca + ar[3]*sa) * height + (Math.random() - 0.5) * tube * 2;
+          py = (ar[1]*ca + ar[4]*sa) * height + (Math.random() - 0.5) * tube * 2;
+          pz = (ar[2]*ca + ar[5]*sa) * height + (Math.random() - 0.5) * tube * 2;
+          var pl = Math.sqrt(px*px + py*py + pz*pz) || 1;
+          t[i*3] = px; t[i*3+1] = py; t[i*3+2] = pz;
+          n[i*3] = px/pl; n[i*3+1] = py/pl; n[i*3+2] = pz/pl;
+          sh[i] = 1.5 + Math.random() * 0.6;
+          ti[i*4] = 1.0; ti[i*4+1] = 0.42 + Math.random()*0.15; ti[i*4+2] = 0.16 + Math.random()*0.1; ti[i*4+3] = 0.95;
+          ex[i] = 0.05 + s * 0.95;
+        } else if (sel < 0.17) {
+          // corona dust, rising off the surface (animated in the shader)
+          var d = randDir();
+          r = 1.02 + Math.pow(Math.random(), 1.6) * 0.1;
+          t[i*3] = d[0]*r; t[i*3+1] = d[1]*r; t[i*3+2] = d[2]*r;
+          n[i*3] = d[0]; n[i*3+1] = d[1]; n[i*3+2] = d[2];
+          sh[i] = 0.4 + Math.random() * 0.3;
+          ti[i*4] = 1.0; ti[i*4+1] = 0.55; ti[i*4+2] = 0.28; ti[i*4+3] = 0.9;
+          ex[i] = -1;
+        } else {
+          // photosphere: boiling granulation with sunspots
+          var d2 = randDir();
+          r = 1.0 - Math.random() * 0.02;
+          var g = 0;
+          for (var w2 = 0; w2 < 6; w2++) {
+            var wa = waves[w2];
+            g += Math.sin(wa[0]*d2[0] + wa[1]*d2[1] + wa[2]*d2[2] + wa[3]);
+          }
+          var gn = g / 6 * 0.5 + 0.5;              // 0 — dark lane, 1 — hot granule
+          var spotF = 1;
+          for (var s2 = 0; s2 < spots.length; s2++) {
+            var spd = spots[s2];
+            var dot2 = d2[0]*spd[0] + d2[1]*spd[1] + d2[2]*spd[2];
+            if (dot2 < 0.98) continue;
+            var sa2 = Math.sqrt(Math.max(0, 2 * (1 - dot2)));
+            if (sa2 < spd[3]) {
+              var q2 = sa2 / spd[3];
+              spotF = Math.min(spotF, 0.2 + 0.8 * q2 * q2);
+            }
+          }
+          var heat = gn * spotF;
+          t[i*3] = d2[0]*r; t[i*3+1] = d2[1]*r; t[i*3+2] = d2[2]*r;
+          n[i*3] = d2[0]; n[i*3+1] = d2[1]; n[i*3+2] = d2[2];
+          sh[i] = (0.6 + 0.9 * gn) * spotF;
+          ti[i*4]   = 1.0;
+          ti[i*4+1] = 0.35 + 0.62 * heat;
+          ti[i*4+2] = 0.08 + 0.65 * heat * heat;
+          ti[i*4+3] = 0.95;
+          ex[i] = 0;
+        }
+      }
+    },
+    cube: function (t, n, sh, ti, ex) {
       var a = 0.8;
       for (var i = 0; i < N; i++) {
         var x, y, z, nx = 0, ny = 0, nz = 0;
@@ -625,11 +742,11 @@
         }
         t[i*3] = x; t[i*3+1] = y; t[i*3+2] = z;
         n[i*3] = nx; n[i*3+1] = ny; n[i*3+2] = nz;
-        sh[i] = 1;
+        sh[i] = 1; ti[i*4+3] = 0; ex[i] = 0;
       }
     }
   };
-  GEN.earth(target, normal, shadeArr, tintArr);   // Earth is the default shape
+  GEN.earth(target, normal, shadeArr, tintArr, extraArr);   // Earth is the default shape
 
   // signed distance fields matching the generators — used to find the
   // actual touch point on the current shape (ray marching from the camera)
@@ -637,6 +754,7 @@
     sphere: function (x, y, z) { return Math.sqrt(x*x + y*y + z*z) - 1.0; },
     earth:  function (x, y, z) { return Math.sqrt(x*x + y*y + z*z) - 1.0; },
     moon:   function (x, y, z) { return Math.sqrt(x*x + y*y + z*z) - 1.0; },
+    sun:    function (x, y, z) { return Math.sqrt(x*x + y*y + z*z) - 1.0; },
     torus:  function (x, y, z) {
       var q = Math.sqrt(x*x + z*z) - 0.72;
       return Math.sqrt(q*q + y*y) - 0.34;
@@ -662,6 +780,7 @@
   var bufNormal = bindAttr('aNormal', normal, 3);
   var bufShade = bindAttr('aShade', shadeArr, 1);
   var bufTint = bindAttr('aTint', tintArr, 4);
+  var bufExtra = bindAttr('aExtra', extraArr, 1);
   bindAttr('aScatter', scatter, 3);
   bindAttr('aSeed', seed, 2);
 
@@ -671,11 +790,12 @@
   var shape = 'earth', pendingShape = null;
   function applyShape(name) {
     shape = name;
-    GEN[name](target, normal, shadeArr, tintArr);
+    GEN[name](target, normal, shadeArr, tintArr, extraArr);
     gl.bindBuffer(gl.ARRAY_BUFFER, bufTarget); gl.bufferSubData(gl.ARRAY_BUFFER, 0, target);
     gl.bindBuffer(gl.ARRAY_BUFFER, bufNormal); gl.bufferSubData(gl.ARRAY_BUFFER, 0, normal);
     gl.bindBuffer(gl.ARRAY_BUFFER, bufShade); gl.bufferSubData(gl.ARRAY_BUFFER, 0, shadeArr);
     gl.bindBuffer(gl.ARRAY_BUFFER, bufTint); gl.bufferSubData(gl.ARRAY_BUFFER, 0, tintArr);
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufExtra); gl.bufferSubData(gl.ARRAY_BUFFER, 0, extraArr);
   }
   function setShape(name) {
     if (!GEN[name] || name === (pendingShape || shape)) return;
@@ -1013,6 +1133,7 @@
   var prev = performance.now();
   var frameAcc = 0, frameN = 0, fpsShown = 0, hudTimer = 0;
   var degraded = false;
+  var sunAmt = 0;    // eases to 1 while the sun is the active shape
 
   if (reducedMotion) { assemble = 1; phase = PH_HOLD; }
 
@@ -1130,6 +1251,8 @@
     gl.uniform1f(U.uHand, SET.hand);
     gl.uniform1f(U.uDofPx, pxScale * 2.2);
     gl.uniform1f(U.uFocusW, dist - 1.15 + SET.focus * 2.3);
+    sunAmt += ((shape === 'sun' ? 1 : 0) - sunAmt) * (1 - Math.exp(-2.5 * dt));
+    gl.uniform1f(U.uSun, sunAmt);
     gl.uniform3f(U.uCursorPos, cursorSm[0], cursorSm[1], cursorSm[2]);
     gl.uniform1f(U.uRepulse, hasMouse ? repulse : repulse * 0.3);
     gl.uniform4fv(U.uRipples, rippleBuf);
