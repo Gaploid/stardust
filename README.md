@@ -68,27 +68,6 @@ PIA06193, the natural-colour mosaic: sunlit disc rgb(222, 206, 158), half-lit
 mid latitudes rgb(146, 138, 119), winter north rgb(82, 84, 92). Saturn is
 butterscotch and grey, not the lemon the strip used to make of it.
 
-Mars is two maps. The Viking mosaic is reduced to a 16-colour palette by
-k-means and stored as a 4-bit index per cell: the planet's whole gamut is one
-thin curve from dark basalt through dust to ice, and the palette follows it to
-within 3/255 per channel. The map is then asked only what a cell is — dust,
-basalt or ice, by red minus blue — and how bright it is; the colours are
-enhanced, the red the eye expects of Mars, because the mosaic's own are muted
-and Viking's calibration ran pink. Under it the MOLA grid lifts the shell and
-tilts each particle's normal, so Valles Marineris, Hellas and the Tharsis
-shields are lit like terrain as the planet turns. The relief is a byte per
-cell at 256×128 — a 115 m step — rather than 4 bits at 512×256 like the other
-maps: sixteen levels were tried first, and even read bilinearly they came out
-as contour rings around Tharsis and Hellas once the light hit the slopes.
-Relief is exaggerated 6.8× so Tharsis reads on the limb. Both maps are read
-bilinearly. Phobos and Deimos are procedural potatoes at twenty times their size and
-a third of their distance (at true scale each would be a single particle),
-tidally locked with the long axis toward Mars on their own slightly tilted
-orbits, Stickney on Phobos's leading face, Deimos rounder and a shade more tan.
-They sit still in model space and orbit as it turns, and they are rigid: the
-swell is a planet wide, and a moon a twentieth of that would only breathe in
-and out on it, so the shader leaves them out of it.
-
 Jupiter is split into three layers rather than one colour map: brightness
 carries the belts, the ovals and the Great Red Spot and needs the resolution,
 while chroma varies far more slowly and rides at a quarter of it. Full colour at
