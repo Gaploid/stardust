@@ -28,6 +28,34 @@ Saturn, the Sun, or a cube — and you can stir them with your cursor.
 
 Drag rotates · Space scatters · wheel zooms.
 
+## Impact
+
+**Live: https://gaploid.github.io/stardust/collision.html**
+
+A second page, and a different kind of thing: not a shape to assemble but a
+simulation. Two planets of real mass — a proto-Earth and an impactor you size
+from 0.02 to 1 M⊕ — approach under their own gravity and collide. They are
+made of 16k to 262k body-particles that all pull on each other; touching
+particles push back like a stiff spring and bleed energy into heat, so the
+material stays incompressible, splashes, glows where it was hit, and clumps
+back together. Time runs in real hours: the unit is √(R³/GM) for Earth, 13.4
+minutes, and the clock in the corner counts them.
+
+Presets: **theia** (the canonical Moon-forming impact, 0.1 M⊕ at 45°),
+**head-on**, **hit & run** (grazing and fast — the impactor survives and
+leaves), **twins** (equal masses), **shatter** (2.6× escape speed). The readout
+groups particles by contact every few frames and reports the largest body, what
+is bound in orbit around it, what is escaping, and the second body once one has
+formed. *Advanced* has the mass ratio, the angle, the speed in units of escape
+velocity, the body count and the restitution.
+
+It is not SPH — no shocks, no vaporization — but everything the eye picks out
+of the real runs is here: the deformation, the tidal arm, the disk,
+re-accretion. The disk clumps in hours where the real Moon took months; the
+clock is honest about the hours, not about that.
+
+Drag rotates · wheel zooms · Space pauses · R restarts · F follows the largest body.
+
 ## Data sources
 
 Every planetary surface is real data, downsampled and embedded directly in the
@@ -95,10 +123,38 @@ when it is raised — 10M particles is 333 MB of VRAM, so it is opt-in. The CPU
 side stages one 25k chunk at a time, which keeps generation off the main thread
 in slices and costs ~2 MB of RAM whatever the count.
 
+`collision.html` is WebGL 2, also dependency-free, and has no compute shaders
+or atomics to lean on, so the two hard parts are done with tricks. Contacts:
+a hashed grid of cells one neighbour-radius wide, filled by depth-peeling —
+every particle draws a one-pixel point at its cell and the depth test keeps
+the lowest index; eight passes give eight slots a cell, and a particle then
+searches its 27 cells instead of the whole world. Gravity: particle-mesh —
+mass is splatted onto a 64³ mesh by additive blending (cloud-in-cell), the
+acceleration at every occupied cell is the direct sum over the 12³ fine cells
+around it (the whole planet fits in that block) plus the 16³ coarse cells'
+centres of mass beyond, and particles read it back trilinearly; off the mesh,
+everything on it acts as one mass. The approach is a two-body problem solved
+on the CPU with the planets carried rigid, so the expensive part starts at
+first touch. Symplectic Euler, a step set by the contact spring's period; the
+cells are rebuilt every other step (a particle moves under a fifth of a radius
+a step, the search radius has more than half to spare) and the mesh every
+fourth (gravity changes on the scale of a time unit, a step is a thousandth of
+one), which halves the cost of a step without changing a digit of the result.
+
+The picture is three screen-space passes borrowed from fluid rendering:
+sphere impostors with per-fragment depth, a bilateral blur two particles wide
+that melts them into a skin without crossing a silhouette, and normals from
+the smoothed depth, lit by one sun. Two million attribute-less dust points
+ride on the bodies over the top, and a friends-of-friends pass in a worker
+reads the positions back every second or so to tell the planet from its disk.
+
 ## Changelog
 
 Broad strokes, newest first; the commit history tells each one in full.
 
+- **2026-08-25 — Impact.** A second page: two planets of real mass collide
+  under their own gravity, on the GPU, from the canonical Moon-forming impact
+  to a hit-and-run. A readout says what stays, what orbits, and what escapes.
 - **2026-08-25 — Mars, with Phobos and Deimos.** The Viking colour mosaic over
   MOLA relief, read back in enhanced red. Two procedural moons in tilted
   orbits, tidally locked and rigid in the swell.

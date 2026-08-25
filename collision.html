@@ -1,0 +1,1792 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A giant impact, simulated: two self-gravitating planets of real mass collide in WebGL — the splash, the debris disk, and the moon that gathers out of it.">
+<meta property="og:title" content="Stardust — Impact">
+<meta property="og:description" content="Two planets with real mass and gravity collide in your browser.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>&#x1F4A5;</text></svg>">
+<title>Stardust — Impact</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Same night as the main page — every color explicit. */
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #04060a;
+    overflow: hidden;
+  }
+  #stage {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    touch-action: none;
+    cursor: grab;
+  }
+  #stage.dragging { cursor: grabbing; }
+  .hud {
+    position: fixed;
+    z-index: 2;
+    pointer-events: none;
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.7;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #66788c;
+    user-select: none;
+  }
+  .hud strong {
+    display: block;
+    font-weight: 500;
+    font-size: 13px;
+    letter-spacing: 0.3em;
+    color: #c2d4e6;
+  }
+  .hud button {
+    background: none;
+    border: none;
+    margin: 0;
+    -webkit-tap-highlight-color: transparent;
+    padding: 0 0 3px;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: #66788c;
+    cursor: pointer;
+    border-bottom: 1px solid transparent;
+  }
+  .hud button:hover { color: #9db0c4; }
+  .hud button:focus-visible { outline: 1px solid #66788c; outline-offset: 3px; }
+  .hud button.on { color: #c2d4e6; border-bottom-color: #c2d4e6; }
+  .hud button .ic {
+    margin-right: 6px;
+    font-size: 12px;
+    filter: saturate(0.6) brightness(0.9);
+  }
+  .hud button.on .ic { filter: none; }
+  #hud-title { top: 22px; left: 26px; }
+  #hud-corner {
+    top: 22px;
+    right: 26px;
+    z-index: 3;
+    pointer-events: auto;
+  }
+  #hud-back {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 14px;
+    color: #c2d4e6;
+    text-decoration: none;
+    background: rgba(8, 12, 18, 0.7);
+    border: 1px solid #2a3644;
+    border-radius: 4px;
+  }
+  #hud-back:hover { border-color: #66788c; color: #ffffff; background: rgba(16, 24, 34, 0.85); }
+  #hud-controls {
+    top: 96px;
+    left: 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+    pointer-events: auto;
+  }
+  #hud-preset, #hud-run { display: flex; gap: 6px 16px; flex-wrap: wrap; align-items: baseline; }
+  #hud-run .sep { color: #3d4a58; }
+  #adv-panel {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 12px 14px;
+    background: rgba(8, 12, 18, 0.78);
+    border: 1px solid #22303e;
+    border-radius: 4px;
+  }
+  #adv-panel[hidden] { display: none; }
+  #adv-panel label {
+    display: grid;
+    grid-template-columns: 96px 120px 64px;
+    align-items: center;
+    gap: 10px;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+  }
+  #adv-panel input[type="range"] {
+    width: 120px;
+    accent-color: #7f9cbb;
+    cursor: pointer;
+  }
+  #adv-panel input[type="checkbox"] {
+    justify-self: start;
+    width: 14px;
+    height: 14px;
+    accent-color: #7f9cbb;
+    cursor: pointer;
+  }
+  #adv-panel span { text-align: right; color: #9db0c4; font-variant-numeric: tabular-nums; }
+  #adv-panel .note { margin-top: 4px; font-size: 9px; letter-spacing: 0.08em; color: #3d4a58; text-transform: none; }
+  #hud-report {
+    bottom: 64px;
+    right: 26px;
+    padding: 10px 12px;
+    background: rgba(8, 12, 18, 0.78);
+    border: 1px solid #22303e;
+    border-radius: 4px;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: none;
+    line-height: 1.6;
+    color: #9db0c4;
+    white-space: pre;
+    font-variant-numeric: tabular-nums;
+  }
+  #hud-report[hidden] { display: none; }
+  #hud-report b { font-weight: 500; color: #c2d4e6; }
+  #hud-report i { font-style: normal; color: #566574; }
+  #hud-help { bottom: 20px; left: 26px; }
+  #hud-stat { bottom: 20px; right: 26px; text-align: right; font-variant-numeric: tabular-nums; }
+  #hud-stat strong { font-size: 15px; letter-spacing: 0.2em; }
+  #fallback {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 13px;
+    letter-spacing: 0.1em;
+    color: #8a97a6;
+    background: #04060a;
+    text-align: center;
+    padding: 24px;
+  }
+  @media (max-width: 640px) {
+    #hud-help { display: none; }
+    #hud-title { top: 14px; left: 16px; }
+    #hud-corner { top: 14px; right: 16px; }
+    #hud-back { padding: 8px 10px; }
+    #hud-controls { top: 78px; left: 16px; right: 16px; gap: 10px; }
+    .hud { font-size: 12px; }
+    .hud button { padding: 5px 0 6px; }
+    #hud-preset, #hud-run { gap: 4px 14px; }
+    #adv-panel { max-width: calc(100vw - 64px); }
+    #adv-panel label { grid-template-columns: 84px 1fr 56px; }
+    #adv-panel input[type="range"] { width: 100%; height: 26px; }
+    #hud-stat { bottom: 12px; right: 16px; }
+    #hud-report { bottom: 58px; right: 16px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="hud" id="hud-title"><strong>Impact</strong><span id="hud-sub">initializing…</span></div>
+<div class="hud" id="hud-corner"><a id="hud-back" href="index.html">← stardust</a></div>
+<div class="hud" id="hud-controls">
+<div id="hud-preset">
+  <button data-preset="theia" class="on"><span class="ic">🌙</span>theia</button>
+  <button data-preset="headon"><span class="ic">💥</span>head-on</button>
+  <button data-preset="hitrun"><span class="ic">☄️</span>hit &amp; run</button>
+  <button data-preset="twins"><span class="ic">🪐</span>twins</button>
+  <button data-preset="shatter"><span class="ic">🔥</span>shatter</button>
+</div>
+<div id="hud-run">
+  <button id="btn-pause">pause</button>
+  <button id="btn-restart">restart</button>
+  <span class="sep">·</span>
+  <button data-speed="1">¼×</button>
+  <button data-speed="2">½×</button>
+  <button data-speed="4" class="on">1×</button>
+  <button data-speed="8">2×</button>
+  <button data-speed="16">4×</button>
+  <span class="sep">·</span>
+  <button id="btn-follow">follow</button>
+</div>
+<div id="hud-adv">
+  <button id="adv-toggle"><span class="ic">⚙️</span>advanced</button>
+  <div id="adv-panel" hidden>
+    <label>impactor <input type="range" id="set-q" min="0.02" max="1" step="0.01" value="0.1"><span id="val-q">0.10 M⊕</span></label>
+    <label>angle <input type="range" id="set-angle" min="0" max="85" step="1" value="45"><span id="val-angle">45°</span></label>
+    <label>speed <input type="range" id="set-vfac" min="0.8" max="3" step="0.05" value="1.05"><span id="val-vfac">1.05 v.esc</span></label>
+    <label>bodies <input type="range" id="set-n" min="0" max="4" step="1" value="3"><span id="val-n">131k</span></label>
+    <label>bounce <input type="range" id="set-rest" min="0.05" max="0.9" step="0.05" value="0.3"><span id="val-rest">0.30</span></label>
+    <label>dust <input type="range" id="set-dust" min="0" max="4000000" step="250000" value="2000000"><span id="val-dust">2M</span></label>
+    <label>exposure <input type="range" id="set-exp" min="0.2" max="4" step="0.1" value="1"><span id="val-exp">1.0</span></label>
+    <label>glow <input type="range" id="set-glow" min="0" max="3" step="0.1" value="1"><span id="val-glow">1.0</span></label>
+    <label>shading <input type="checkbox" id="set-shade" checked><span id="val-shade">on</span></label>
+    <label>stars <input type="checkbox" id="set-stars" checked><span id="val-stars">on</span></label>
+    <div class="note">impactor · angle · speed · bodies · bounce restart the run</div>
+  </div>
+</div>
+</div>
+<div class="hud" id="hud-report" hidden></div>
+<div class="hud" id="hud-help">drag — rotate &nbsp;·&nbsp; wheel — zoom &nbsp;·&nbsp; space — pause &nbsp;·&nbsp; r — restart</div>
+<div class="hud" id="hud-stat"><strong id="hud-clock">T+ 0h 00m</strong><span id="hud-fps"></span></div>
+<div id="fallback">WebGL 2 is not available in this browser —<br>the simulation cannot run.</div>
+<script>
+(function () {
+'use strict';
+var $ = function (id) { return document.getElementById(id); };
+var canvas = $('stage');
+var gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, stencil: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
+function fail(msg) { var f = $('fallback'); f.innerHTML = msg; f.style.display = 'flex'; }
+if (!gl) { fail('WebGL 2 is not available in this browser —<br>the simulation cannot run.'); return; }
+if (!gl.getExtension('EXT_color_buffer_float')) { fail('This GPU cannot render to float textures —<br>the simulation cannot run.'); return; }
+
+// ---------- units ----------
+// G = 1, Earth mass = 1, Earth radius = 1. Then the time unit is √(R³/GM) = 805 s
+// (13.4 min), the velocity unit is 7.91 km/s, and escape speed off Earth is √2.
+// Every body-particle carries the same mass, so a body's mass is a head count
+// and — at Earth density — its radius is the cube root of its mass.
+var T_UNIT = 805, V_UNIT = 7.91;
+var N_CHOICES = [16384, 32768, 65536, 131072, 262144];
+var N_LABELS = ['16k', '33k', '65k', '131k', '262k'];
+var SLOTS = 8;                              // body-particles a contact cell can hold
+var FL = 6.0, FH = 2 * FL / 64;             // gravity mesh: 64³ cells over ±6 R⊕
+var PRESETS = {
+  theia:   { q: 0.10, angle: 45, vfac: 1.05, dist: 7.5, label: 'theia' },      // the canonical Moon-forming impact
+  headon:  { q: 0.10, angle: 0,  vfac: 1.00, dist: 7.5, label: 'head-on' },
+  hitrun:  { q: 0.25, angle: 65, vfac: 1.60, dist: 10,  label: 'hit & run' },  // grazing and fast: the impactor survives
+  twins:   { q: 1.00, angle: 45, vfac: 1.10, dist: 9,   label: 'twins' },
+  shatter: { q: 0.50, angle: 20, vfac: 2.60, dist: 18,  label: 'shatter' }
+};
+var S = { q: 0.1, angle: 45, vfac: 1.05, nIdx: 3, rest: 0.3, dust: 2000000,
+          exposure: 1.0, glow: 1.0, shade: true, stars: true, follow: false, speed: 4, preset: 'theia' };
+var COL_TARGET = [0.40, 0.58, 0.90], COL_IMPACTOR = [0.96, 0.55, 0.28];
+var FOV = 38 * Math.PI / 180;
+var STAR_COUNT = 3000;
+
+// ---------- shaders ----------
+var GLSL_HASH = [
+  'uint hash(uint x) { x ^= x >> 16u; x *= 0x7feb352du; x ^= x >> 15u; x *= 0x846ca68bu; x ^= x >> 16u; return x; }',
+  'float rnd(uint x) { return float(hash(x)) * (1.0 / 4294967296.0); }'
+].join('\n');
+// molten rock: dark red, orange, then yellow-white
+var GLSL_HEAT = [
+  'vec3 heat(float t) {',
+  '  t = max(t, 0.0);',
+  '  float r = smoothstep(0.0, 0.25, t);',
+  '  float g = smoothstep(0.15, 0.7, t) * 0.75;',
+  '  float b = smoothstep(0.45, 1.3, t) * 0.65;',
+  '  return vec3(r, g, b) * min(t * 2.5, 2.2);',
+  '}'
+].join('\n');
+
+var QUAD_VS = [
+  '#version 300 es',
+  'void main() {',
+  '  vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));',
+  '  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);',
+  '}'
+].join('\n');
+
+// ---------- the physics, in six passes a step ----------
+// 3-D grids live in 2-D atlases: slices side by side. The gravity mesh is a
+// fixed 64³ over ±6 R⊕ (8×8 slices of 64×64), its coarse twin 16³ (4×4 of 16²).
+var GLSL_GRID = [
+  'ivec2 fineAt(ivec3 c) { return ivec2((c.z & 7) * 64 + c.x, (c.z >> 3) * 64 + c.y); }',
+  'ivec2 coarseAt(ivec3 c) { return ivec2((c.z & 3) * 16 + c.x, (c.z >> 2) * 16 + c.y); }'
+].join('\n');
+// The contact grid is a hashed cube of G³ cells (G a power of two), one cell =
+// one neighbour radius, wrapping around: far-apart particles may share a cell,
+// the distance check sorts them out.
+var GLSL_HGRID = [
+  'uniform int uGMask;',
+  'uniform int uGShift;',
+  'uniform int uSXMask;',
+  'uniform int uSXShift;',
+  'ivec2 hashAt(ivec3 c) { c &= uGMask; return ivec2(((c.z & uSXMask) << uGShift) + c.x, ((c.z >> uSXShift) << uGShift) + c.y); }'
+].join('\n');
+
+// 1. Filling the contact cells, one slot per pass. Every particle draws a
+//    one-pixel point at its cell; the depth test keeps the lowest index.
+//    Next pass, particles already seated stay away — a depth-peel that stands
+//    in for an atomic counter.
+var SLOT_VS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp int;',
+  'precision highp sampler2D;',
+  'uniform sampler2D uPos;',
+  'uniform sampler2D uS0;', 'uniform sampler2D uS1;', 'uniform sampler2D uS2;', 'uniform sampler2D uS3;',
+  'uniform sampler2D uS4;', 'uniform sampler2D uS5;', 'uniform sampler2D uS6;', 'uniform sampler2D uS7;',
+  'uniform ivec2 uSize;',
+  'uniform int uK;',
+  'uniform float uInvCell;',
+  'uniform vec2 uAtlas;',
+  'uniform float uInvN;',
+  GLSL_HGRID,
+  'flat out float vIdx;',
+  'void main() {',
+  '  int i = gl_VertexID;',
+  '  vec3 p = texelFetch(uPos, ivec2(i % uSize.x, i / uSize.x), 0).xyz;',
+  '  ivec2 a = hashAt(ivec3(floor(p * uInvCell)));',
+  '  float me = float(i);',
+  '  bool t = false;',
+  '  if (uK > 0) t = t || (texelFetch(uS0, a, 0).r == me);',
+  '  if (uK > 1) t = t || (texelFetch(uS1, a, 0).r == me);',
+  '  if (uK > 2) t = t || (texelFetch(uS2, a, 0).r == me);',
+  '  if (uK > 3) t = t || (texelFetch(uS3, a, 0).r == me);',
+  '  if (uK > 4) t = t || (texelFetch(uS4, a, 0).r == me);',
+  '  if (uK > 5) t = t || (texelFetch(uS5, a, 0).r == me);',
+  '  if (uK > 6) t = t || (texelFetch(uS6, a, 0).r == me);',
+  '  if (uK > 7) t = t || (texelFetch(uS7, a, 0).r == me);',
+  '  vIdx = me;',
+  '  gl_PointSize = 1.0;',
+  '  if (t) { gl_Position = vec4(4.0, 4.0, 4.0, 1.0); return; }',
+  '  gl_Position = vec4((vec2(a) + 0.5) / uAtlas * 2.0 - 1.0, me * uInvN * 2.0 - 1.0, 1.0);',
+  '}'
+].join('\n');
+var SLOT_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'flat in float vIdx;',
+  'out vec4 o;',
+  'void main() { o = vec4(vIdx, 0.0, 0.0, 1.0); }'
+].join('\n');
+
+// 2. Mass onto the mesh: each particle is eight points, one per corner of its
+//    cell, cloud-in-cell weights, added up by blending. Mass is in particles;
+//    xyz carry mass-weighted position so a cell knows its centre of mass.
+var DEP_VS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp int;',
+  'precision highp sampler2D;',
+  'uniform sampler2D uPos;',
+  'uniform ivec2 uSize;',
+  'uniform float uInvH;',
+  'uniform float uL;',
+  GLSL_GRID,
+  'out vec4 vW;',
+  'void main() {',
+  '  int i = gl_VertexID >> 3, k = gl_VertexID & 7;',
+  '  vec3 p = texelFetch(uPos, ivec2(i % uSize.x, i / uSize.x), 0).xyz;',
+  '  vec3 g = (p + uL) * uInvH - 0.5;',
+  '  vec3 f = floor(g), t = g - f;',
+  '  ivec3 o = ivec3(k & 1, (k >> 1) & 1, k >> 2);',
+  '  ivec3 c = ivec3(f) + o;',
+  '  vec3 w3 = mix(1.0 - t, t, vec3(o));',
+  '  gl_PointSize = 1.0;',
+  '  if (any(lessThan(c, ivec3(0))) || any(greaterThan(c, ivec3(63)))) { gl_Position = vec4(4.0, 4.0, 4.0, 1.0); vW = vec4(0.0); return; }',
+  '  gl_Position = vec4((vec2(fineAt(c)) + 0.5) / 512.0 * 2.0 - 1.0, 0.0, 1.0);',
+  '  vW = vec4(p, 1.0) * (w3.x * w3.y * w3.z);',
+  '}'
+].join('\n');
+var DEP_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'in vec4 vW;',
+  'out vec4 o;',
+  'void main() { o = vW; }'
+].join('\n');
+
+// 3. The coarse mesh: every 4³ block of fine cells summed.
+var COARSE_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp int;',
+  'precision highp sampler2D;',
+  'uniform sampler2D uFine;',
+  GLSL_GRID,
+  'out vec4 o;',
+  'void main() {',
+  '  ivec2 me = ivec2(gl_FragCoord.xy);',
+  '  ivec3 c = ivec3(me.x & 15, me.y & 15, (me.y >> 4) * 4 + (me.x >> 4));',
+  '  vec4 s = vec4(0.0);',
+  '  for (int z = 0; z < 4; z++) for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)',
+  '    s += texelFetch(uFine, fineAt(c * 4 + ivec3(x, y, z)), 0);',
+  '  o = s;',
+  '}'
+].join('\n');
+// 4. Everything on the mesh as one mass, for particles that have left it.
+var MONO_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp sampler2D;',
+  'uniform sampler2D uCoarse;',
+  'out vec4 o;',
+  'void main() {',
+  '  vec4 s = vec4(0.0);',
+  '  for (int y = 0; y < 64; y++) for (int x = 0; x < 64; x++) s += texelFetch(uCoarse, ivec2(x, y), 0);',
+  '  o = s;',
+  '}'
+].join('\n');
+// 5. Gravity at every occupied fine cell: the 3³ coarse cells around it are
+//    summed fine cell by fine cell (that block is 2.25 R⊕ wide, so the whole
+//    planet is in it), the rest of the world as coarse centres of mass.
+var CELL_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp int;',
+  'precision highp sampler2D;',
+  'uniform sampler2D uFine;',
+  'uniform sampler2D uCoarse;',
+  'uniform float uH;',
+  'uniform float uL;',
+  'uniform float uEps2;',
+  'uniform float uGm;',
+  GLSL_GRID,
+  'out vec4 o;',
+  'void main() {',
+  '  ivec2 me = ivec2(gl_FragCoord.xy);',
+  '  ivec3 c = ivec3(me.x & 63, me.y & 63, (me.y >> 6) * 8 + (me.x >> 6));',
+  '  if (texelFetch(uFine, me, 0).w <= 0.0) { o = vec4(0.0); return; }',
+  '  vec3 x = (vec3(c) + 0.5) * uH - uL;',
+  '  ivec3 cc = c >> 2;',
+  '  vec3 acc = vec3(0.0);',
+  '  for (int kz = 0; kz < 16; kz++) for (int ky = 0; ky < 16; ky++) for (int kx = 0; kx < 16; kx++) {',
+  '    ivec3 k = ivec3(kx, ky, kz);',
+  '    ivec3 dd = abs(k - cc);',
+  '    if (max(dd.x, max(dd.y, dd.z)) <= 1) {',
+  '      for (int fz = 0; fz < 4; fz++) for (int fy = 0; fy < 4; fy++) for (int fx = 0; fx < 4; fx++) {',
+  '        ivec3 f = k * 4 + ivec3(fx, fy, fz);',
+  '        if (f == c) continue;',
+  '        vec4 m = texelFetch(uFine, fineAt(f), 0);',
+  '        if (m.w <= 0.0) continue;',
+  '        vec3 r = m.xyz / m.w - x;',
+  '        float inv = inversesqrt(dot(r, r) + uEps2);',
+  '        acc += r * (m.w * inv * inv * inv);',
+  '      }',
+  '    } else {',
+  '      vec4 m = texelFetch(uCoarse, coarseAt(k), 0);',
+  '      if (m.w > 0.0) { vec3 r = m.xyz / m.w - x; float inv = inversesqrt(dot(r, r)); acc += r * (m.w * inv * inv * inv); }',
+  '    }',
+  '  }',
+  '  o = vec4(acc * uGm, 0.0);',
+  '}'
+].join('\n');
+
+// 6. The particles. Contacts from the 27 cells around (a spring-dashpot that
+//    keeps the material incompressible and turns impact energy into heat),
+//    gravity read off the mesh — or, off the mesh, from its total mass.
+//    Symplectic Euler: kick, then drift.
+var SIM_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp int;',
+  'precision highp sampler2D;',
+  'uniform sampler2D uPos;',      // xyz — position, w — body (0 target, 1 impactor)
+  'uniform sampler2D uVel;',      // xyz — velocity, w — heat
+  'uniform sampler2D uForce;',
+  'uniform sampler2D uMono;',
+  'uniform sampler2D uS0;', 'uniform sampler2D uS1;', 'uniform sampler2D uS2;', 'uniform sampler2D uS3;',
+  'uniform sampler2D uS4;', 'uniform sampler2D uS5;', 'uniform sampler2D uS6;', 'uniform sampler2D uS7;',
+  'uniform ivec2 uSize;',
+  'uniform float uInvCell;',
+  'uniform float uCell;',
+  'uniform float uInvH;',
+  'uniform float uL;',
+  'uniform float uDt;',
+  'uniform float uGm;',
+  'uniform float uEps2;',
+  'uniform float uTouch;',        // contact distance, 2a
+  'uniform float uLink2;',        // neighbour radius²
+  'uniform float uK;',            // contact spring
+  'uniform float uC;',            // contact dashpot
+  'uniform float uInvM;',
+  'uniform float uDamp;',
+  'uniform float uCool;',
+  'uniform float uHeatK;',
+  'uniform float uSettle;',       // 1 — damp everything (settling)
+  'uniform float uKick;',         // 1 — set the bulk velocities this step
+  'uniform vec3 uBulk0;',
+  'uniform vec3 uBulk1;',
+  GLSL_GRID,
+  GLSL_HGRID,
+  'layout(location = 0) out vec4 oPos;',
+  'layout(location = 1) out vec4 oVel;',
+  'layout(location = 2) out vec4 oAux;',   // xyz — gravity felt, w — neighbours
+  'float slotAt(int k, ivec2 a) {',
+  '  if (k == 0) return texelFetch(uS0, a, 0).r;',
+  '  if (k == 1) return texelFetch(uS1, a, 0).r;',
+  '  if (k == 2) return texelFetch(uS2, a, 0).r;',
+  '  if (k == 3) return texelFetch(uS3, a, 0).r;',
+  '  if (k == 4) return texelFetch(uS4, a, 0).r;',
+  '  if (k == 5) return texelFetch(uS5, a, 0).r;',
+  '  if (k == 6) return texelFetch(uS6, a, 0).r;',
+  '  return texelFetch(uS7, a, 0).r;',
+  '}',
+  'void main() {',
+  '  ivec2 me = ivec2(gl_FragCoord.xy);',
+  '  int myIdx = me.y * uSize.x + me.x;',
+  '  vec4 P = texelFetch(uPos, me, 0);',
+  '  vec4 V = texelFetch(uVel, me, 0);',
+  '  vec3 p = P.xyz, v = V.xyz;',
+  '  float body = P.w;',
+  '  vec3 push = vec3(0.0);',
+  '  float heat = 0.0, nb = 0.0;',
+  '  ivec3 c = ivec3(floor(p * uInvCell));',
+  '  vec3 c0 = vec3(c) * uCell;',
+  '  for (int dz = -1; dz <= 1; dz++) for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {',
+  '    vec3 lo = c0 + vec3(float(dx), float(dy), float(dz)) * uCell;',
+  '    vec3 q = clamp(p, lo, lo + uCell) - p;',       // nearest point of that cell: too far, skip it
+  '    if (dot(q, q) > uLink2) continue;',
+  '    ivec2 a = hashAt(c + ivec3(dx, dy, dz));',
+  '    for (int k = 0; k < 8; k++) {',
+  '      float fj = slotAt(k, a);',
+  '      if (fj < 0.0) break;',
+  '      int j = int(fj);',
+  '      if (j == myIdx) continue;',
+  '      ivec2 tj = ivec2(j % uSize.x, j / uSize.x);',
+  '      vec3 d = texelFetch(uPos, tj, 0).xyz - p;',
+  '      float r2 = dot(d, d);',
+  '      if (r2 < uLink2) {',
+  '        float r = sqrt(r2);',
+  '        vec3 n = d / max(r, 1e-6);',
+  '        float ov = uTouch - r;',
+  '        if (ov > 0.0) {',
+  '          vec3 vo = texelFetch(uVel, tj, 0).xyz;',
+  '          float vn = dot(vo - v, n);',
+  '          float fn = max(uK * ov - uC * vn, 0.0);',
+  '          push -= n * fn;',
+  '          heat += uC * vn * vn * step(0.0001, fn);',
+  '        }',
+  '        nb += 1.0;',
+  '      }',
+  '    }',
+  '  }',
+  '  vec3 grav = vec3(0.0);',
+  '  vec3 g = (p + uL) * uInvH - 0.5;',
+  '  if (all(greaterThanEqual(g, vec3(0.0))) && all(lessThanEqual(g, vec3(63.0)))) {',
+  '    vec3 f = floor(g), t = g - f;',
+  '    ivec3 c0 = ivec3(f);',
+  '    for (int k = 0; k < 8; k++) {',
+  '      ivec3 o = ivec3(k & 1, (k >> 1) & 1, k >> 2);',
+  '      vec3 w3 = mix(1.0 - t, t, vec3(o));',
+  '      grav += texelFetch(uForce, fineAt(min(c0 + o, ivec3(63))), 0).xyz * (w3.x * w3.y * w3.z);',
+  '    }',
+  '  } else {',
+  '    vec4 mono = texelFetch(uMono, ivec2(0), 0);',
+  '    vec3 r = mono.xyz / max(mono.w, 1e-6) - p;',
+  '    float inv = inversesqrt(dot(r, r) + uEps2);',
+  '    grav = r * (uGm * mono.w * inv * inv * inv);',
+  '  }',
+  '  vec3 acc = grav + push * uInvM;',
+  '  v += acc * uDt;',
+  '  float T = V.w * uCool + heat * uHeatK * uDt;',
+  '  if (uSettle > 0.5) v *= uDamp;',
+  '  if (uKick > 0.5) { v = (body < 0.5) ? uBulk0 : uBulk1; T = 0.0; }',
+  '  p += v * uDt;',
+  '  oPos = vec4(p, body);',
+  '  oVel = vec4(v, T);',
+  '  oAux = vec4(grav, nb);',
+  '}'
+].join('\n');
+
+// The approach is a two-body problem solved on the CPU; the bodies fly in
+// rigid, this pass just carries them.
+var RIGID_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp sampler2D;',
+  'uniform sampler2D uPos;',
+  'uniform sampler2D uVel;',
+  'uniform sampler2D uAux;',
+  'uniform vec3 uBulk0;',
+  'uniform vec3 uBulk1;',
+  'uniform float uDt;',
+  'layout(location = 0) out vec4 oPos;',
+  'layout(location = 1) out vec4 oVel;',
+  'layout(location = 2) out vec4 oAux;',
+  'void main() {',
+  '  ivec2 me = ivec2(gl_FragCoord.xy);',
+  '  vec4 P = texelFetch(uPos, me, 0);',
+  '  oPos = vec4(P.xyz + ((P.w < 0.5) ? uBulk0 : uBulk1) * uDt, P.w);',
+  '  oVel = texelFetch(uVel, me, 0);',
+  '  oAux = texelFetch(uAux, me, 0);',
+  '}'
+].join('\n');
+
+// The dust. Every body-particle is shown as a little cloud of points that
+// ride along with it — no state of their own, their offsets come from a hash
+// of the vertex id. Shading is free: the gravity a particle feels points into
+// its body, so its negative is the surface normal, and a particle with a full
+// shell of neighbours is buried and goes dark.
+var DUST_VS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp int;',
+  'precision highp sampler2D;',
+  'uniform sampler2D uPos;',
+  'uniform sampler2D uVel;',
+  'uniform sampler2D uAux;',
+  'uniform ivec2 uSize;',
+  'uniform int uK;',            // dust points per body-particle
+  'uniform mat4 uVP;',
+  'uniform vec3 uSun;',
+  'uniform float uRad;',        // body-particle radius
+  'uniform float uSpread;',     // dust cloud radius, in uRad
+  'uniform float uPx;',         // pixels per unit at depth 1
+  'uniform float uEnergy;',     // light per point
+  'uniform float uGlow;',
+  'uniform float uShade;',
+  'uniform vec3 uCol0;',
+  'uniform vec3 uCol1;',
+  'in vec4 aOff;',             // xyz — where in the unit ball around its body-particle
+  'out vec3 vCol;',
+  GLSL_HEAT,
+  'void main() {',
+  '  int i = gl_VertexID / uK;',
+  '  ivec2 tc = ivec2(i % uSize.x, i / uSize.x);',
+  '  vec4 P = texelFetch(uPos, tc, 0);',
+  '  vec4 V = texelFetch(uVel, tc, 0);',
+  '  vec4 A = texelFetch(uAux, tc, 0);',
+  '  vec4 clip = uVP * vec4(P.xyz + aOff.xyz * (uRad * uSpread), 1.0);',
+  '  float depth = max(clip.w, 0.05);',
+  '  float size = clamp(uPx * uRad * 0.45 / depth, 1.0, 14.0);',
+  '  gl_PointSize = size;',
+  '  gl_Position = clip;',
+  '  vec3 base = (P.w < 0.5) ? uCol0 : uCol1;',
+  '  float nb = A.w;',
+  '  float buried = smoothstep(6.0, 11.0, nb) * uShade;',
+  '  float bright = mix(1.0, 0.5, buried);',
+  '  vec3 gdir = -A.xyz / (length(A.xyz) + 1e-6);',
+  '  float lit = 0.3 + 0.7 * max(0.0, dot(gdir, uSun));',
+  '  lit = mix(1.0, lit, uShade * smoothstep(2.0, 6.0, nb));',
+  '  vec3 col = (base * lit + heat(V.w) * uGlow) * bright;',
+  '  col *= 1.0 + 2.5 * (1.0 - smoothstep(2.0, 6.0, nb));',   // loose ejecta is vapour and dust — show it
+  '  vCol = col * (uEnergy / (size * size));',
+  '}'
+].join('\n');
+
+var DUST_FS = [
+  '#version 300 es',
+  'precision mediump float;',
+  'in vec3 vCol;',
+  'out vec4 o;',
+  'void main() {',
+  '  vec2 d = gl_PointCoord - 0.5;',
+  '  float r2 = dot(d, d);',
+  '  if (r2 > 0.25) discard;',
+  '  float f = 1.0 - r2 * 4.0;',
+  '  o = vec4(vCol * (f * f), 1.0);',
+  '}'
+].join('\n');
+
+var STAR_VS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp int;',
+  'uniform mat4 uVP;',
+  'uniform vec3 uEye;',
+  'uniform float uBright;',
+  'out vec3 vCol;',
+  GLSL_HASH,
+  'void main() {',
+  '  uint s = uint(gl_VertexID) * 4u + 7u;',
+  '  float z = rnd(s) * 2.0 - 1.0;',
+  '  float ph = rnd(s + 1u) * 6.2831853;',
+  '  float q = sqrt(max(1.0 - z * z, 0.0));',
+  '  vec3 d = vec3(q * cos(ph), z, q * sin(ph));',
+  '  float m = rnd(s + 2u);',
+  '  float b = pow(m, 4.0) * 2.0 + 0.04;',
+  '  vec3 tint = mix(vec3(0.72, 0.84, 1.0), vec3(1.0, 0.9, 0.74), rnd(s + 3u));',
+  '  gl_Position = uVP * vec4(uEye + d * 900.0, 1.0);',
+  '  gl_PointSize = 1.0 + 1.5 * step(0.985, m);',
+  '  vCol = tint * b * uBright;',
+  '}'
+].join('\n');
+
+var STAR_FS = [
+  '#version 300 es',
+  'precision mediump float;',
+  'in vec3 vCol;',
+  'out vec4 o;',
+  'void main() { o = vec4(vCol, 1.0); }'
+].join('\n');
+
+// The body, in three screen-space passes — the trick fluid renderers use.
+// 1. Every body-particle is a sphere impostor with per-fragment depth; the
+//    pass keeps its material colour, its heat, and its view-space depth.
+// 2. A bilateral blur one particle wide smooths depth and colour along the
+//    surface but never across a silhouette — the balls melt into a skin.
+// 3. Normals come from the smoothed depth, and the skin is lit by the sun.
+var G_VS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp int;',
+  'precision highp sampler2D;',
+  'uniform sampler2D uPos;',
+  'uniform sampler2D uVel;',
+  'uniform sampler2D uAux;',
+  'uniform ivec2 uSize;',
+  'uniform mat4 uView;',
+  'uniform mat4 uProj;',
+  'uniform float uRad;',
+  'uniform float uPx;',
+  'uniform float uMaxPt;',
+  'uniform vec3 uCol0;',
+  'uniform vec3 uCol1;',
+  'out float vZc;',
+  'out float vR;',
+  'out float vNb;',
+  'out vec4 vMat;',        // rgb — material, a — heat
+  'void main() {',
+  '  ivec2 tc = ivec2(gl_VertexID % uSize.x, gl_VertexID / uSize.x);',
+  '  vec4 P = texelFetch(uPos, tc, 0);',
+  '  vec4 e = uView * vec4(P.xyz, 1.0);',
+  '  vNb = texelFetch(uAux, tc, 0).w;',
+  '  vZc = e.z;',
+  '  vR = uRad * mix(1.0, 1.25, smoothstep(0.0, 6.0, vNb));',   // packed particles run fat, so the skin has no gaps
+  '  vMat = vec4((P.w < 0.5) ? uCol0 : uCol1, texelFetch(uVel, tc, 0).w);',
+  '  gl_Position = uProj * e;',
+  '  gl_PointSize = clamp(2.1 * vR * uPx / max(-e.z, 0.05), 1.0, uMaxPt);',
+  '}'
+].join('\n');
+
+var G_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'uniform float uP22;',
+  'uniform float uP32;',
+  'in float vZc;',
+  'in float vR;',
+  'in float vNb;',
+  'in vec4 vMat;',
+  'layout(location = 0) out vec4 oMat;',
+  'layout(location = 1) out vec4 oDep;',   // r — view depth, g — neighbours
+  'void main() {',
+  '  vec2 d = gl_PointCoord * 2.0 - 1.0;',
+  '  float r2 = dot(d, d);',
+  '  if (r2 > 1.0) discard;',
+  '  float ze = min(vZc + vR * sqrt(1.0 - r2), -0.05);',
+  '  gl_FragDepth = ((uP22 * ze + uP32) / (-ze)) * 0.5 + 0.5;',
+  '  oMat = vMat;',
+  '  oDep = vec4(-ze, vNb, 0.0, 1.0);',
+  '}'
+].join('\n');
+
+var BLUR_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp sampler2D;',
+  'uniform sampler2D uMat;',
+  'uniform sampler2D uDep;',
+  'uniform ivec2 uDir;',
+  'uniform int uTaps;',
+  'uniform float uStep;',
+  'uniform float uRange;',      // the depth jump that ends a surface
+  'uniform ivec2 uRes;',
+  'layout(location = 0) out vec4 oMat;',
+  'layout(location = 1) out vec4 oDep;',
+  'void main() {',
+  '  ivec2 me = ivec2(gl_FragCoord.xy);',
+  '  vec2 d0 = texelFetch(uDep, me, 0).rg;',
+  '  float z0 = d0.r;',
+  '  if (z0 <= 0.0) { oMat = vec4(0.0); oDep = vec4(0.0); return; }',
+  '  float sig = (float(uTaps) * uStep * 0.5 + 0.5) * max(smoothstep(1.0, 5.0, d0.g), 0.05);',   // loners and small clumps keep their shape
+  '  float ws = 0.0, zs = 0.0;',
+  '  vec4 ms = vec4(0.0);',
+  '  for (int i = -uTaps; i <= uTaps; i++) {',
+  '    float x = float(i) * uStep;',
+  '    ivec2 c = clamp(me + uDir * int(round(x)), ivec2(0), uRes - 1);',
+  '    float z = texelFetch(uDep, c, 0).r;',
+  '    if (z <= 0.0) continue;',
+  '    float dz = (z - z0) / uRange;',
+  '    float w = exp(-x * x / (2.0 * sig * sig) - dz * dz);',
+  '    ws += w; zs += w * z; ms += w * texelFetch(uMat, c, 0);',
+  '  }',
+  '  oDep = vec4(zs / ws, d0.g, 0.0, 1.0);',
+  '  oMat = ms / ws;',
+  '}'
+].join('\n');
+
+var SHADE_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp sampler2D;',
+  'uniform sampler2D uMat;',
+  'uniform sampler2D uDep;',
+  'uniform vec2 uInvP;',        // 1/P00, 1/P11
+  'uniform vec2 uRes;',
+  'uniform vec3 uSunEye;',
+  'uniform float uGlow;',
+  'uniform float uP22;',
+  'uniform float uP32;',
+  'out vec4 o;',
+  GLSL_HEAT,
+  'vec3 posAt(ivec2 c) {',
+  '  float z = texelFetch(uDep, c, 0).r;',
+  '  vec2 ndc = (vec2(c) + 0.5) / uRes * 2.0 - 1.0;',
+  '  return vec3(ndc * uInvP * z, -z);',
+  '}',
+  'void main() {',
+  '  ivec2 me = ivec2(gl_FragCoord.xy);',
+  '  float z = texelFetch(uDep, me, 0).r;',
+  '  if (z <= 0.0) discard;',
+  '  vec3 p = posAt(me);',
+  '  vec3 r = posAt(me + ivec2(1, 0)) - p, l = p - posAt(me - ivec2(1, 0));',
+  '  vec3 u = posAt(me + ivec2(0, 1)) - p, d = p - posAt(me - ivec2(0, 1));',
+  '  vec3 dx = abs(r.z) < abs(l.z) ? r : l;',
+  '  vec3 dy = abs(u.z) < abs(d.z) ? u : d;',
+  '  vec3 n = normalize(cross(dx, dy));',
+  '  if (n.z < 0.0) n = -n;',
+  '  vec4 m = texelFetch(uMat, me, 0);',
+  '  float lit = 0.12 + 0.88 * max(0.0, dot(n, uSunEye));',
+  '  lit *= 0.7 + 0.3 * n.z;',                       // the limb turns away
+  '  o = vec4(m.rgb * lit + heat(m.a) * (uGlow * 0.7), 1.0);',
+  '  gl_FragDepth = ((uP22 * (-z) + uP32) / z) * 0.5 + 0.5;',
+  '}'
+].join('\n');
+
+var TONE_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'uniform sampler2D uHdr;',
+  'uniform float uExposure;',
+  'uniform float uDbg;',
+  'out vec4 o;',
+  'void main() {',
+  '  vec3 c = texelFetch(uHdr, ivec2(gl_FragCoord.xy), 0).rgb;',
+  '  if (uDbg > 0.5) { o = vec4(vec3(fract(c.r * 4.0)) * step(0.001, c.r), 1.0); return; }',
+  '  c = vec3(1.0) - exp(-c * uExposure);',
+  '  c = pow(c, vec3(0.92));',
+  '  float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);',
+  '  o = vec4(vec3(0.016, 0.024, 0.04) + c + (n - 0.5) / 255.0, 1.0);',
+  '}'
+].join('\n');
+
+// ---------- GL helpers ----------
+function compile(type, src) {
+  var sh = gl.createShader(type);
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(sh));
+    throw new Error('shader: ' + gl.getShaderInfoLog(sh));
+  }
+  return sh;
+}
+function program(vs, fs) {
+  var p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('link: ' + gl.getProgramInfoLog(p));
+  var u = {}, n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (var i = 0; i < n; i++) { var info = gl.getActiveUniform(p, i); u[info.name] = gl.getUniformLocation(p, info.name); }
+  return { p: p, u: u };
+}
+function floatTex(w, h, data, internal, type, format) {
+  var t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, internal || gl.RGBA32F, w, h, 0, format || gl.RGBA, type || gl.FLOAT, data || null);
+  return t;
+}
+function simTarget(w, h, pos, vel) {
+  var t = { pos: floatTex(w, h, pos), vel: floatTex(w, h, vel), aux: floatTex(w, h, null), fbo: gl.createFramebuffer() };
+  gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t.pos, 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, t.vel, 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT2, gl.TEXTURE_2D, t.aux, 0);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('sim framebuffer incomplete');
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return t;
+}
+function freeTarget(t) {
+  if (!t) return;
+  gl.deleteTexture(t.pos); gl.deleteTexture(t.vel); gl.deleteTexture(t.aux); gl.deleteFramebuffer(t.fbo);
+}
+
+var simProg, slotProg, depProg, coarseProg, monoProg, cellProg, rigidProg;
+var dustProg, starProg, gProg, blurProg, shadeProg, toneProg, vao;
+try {
+  simProg = program(QUAD_VS, SIM_FS);
+  slotProg = program(SLOT_VS, SLOT_FS);
+  depProg = program(DEP_VS, DEP_FS);
+  coarseProg = program(QUAD_VS, COARSE_FS);
+  monoProg = program(QUAD_VS, MONO_FS);
+  cellProg = program(QUAD_VS, CELL_FS);
+  rigidProg = program(QUAD_VS, RIGID_FS);
+  dustProg = program(DUST_VS, DUST_FS);
+  starProg = program(STAR_VS, STAR_FS);
+  gProg = program(G_VS, G_FS);
+  blurProg = program(QUAD_VS, BLUR_FS);
+  shadeProg = program(QUAD_VS, SHADE_FS);
+  toneProg = program(QUAD_VS, TONE_FS);
+} catch (e) {
+  fail('The simulation shaders failed to compile on this GPU.<br>' + String(e.message || e).slice(0, 200));
+  return;
+}
+vao = gl.createVertexArray();
+gl.bindVertexArray(vao);   // attribute-less drawing: every vertex is made from gl_VertexID
+var dust = { vao: gl.createVertexArray(), buf: gl.createBuffer(), count: -1 };   // the one buffer: dust offsets
+var MAX_POINT = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1];
+
+// ---------- the meshes ----------
+function fboFor(tex, depthRb) {
+  var f = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  if (depthRb) gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthRb);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('mesh framebuffer incomplete');
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return f;
+}
+var dummy = floatTex(1, 1, new Float32Array([-1, 0, 0, 0]));   // "no particle", for slot samplers not yet filled
+var pm = {
+  fine: floatTex(512, 512, null, gl.RGBA16F, gl.HALF_FLOAT),   // 64³: Σ w·xyz, Σ w — blendable
+  coarse: floatTex(64, 64, null),                              // 16³
+  mono: floatTex(1, 1, null),
+  force: floatTex(512, 512, null)                              // acceleration at every fine cell
+};
+pm.fineFbo = fboFor(pm.fine); pm.coarseFbo = fboFor(pm.coarse); pm.monoFbo = fboFor(pm.mono); pm.forceFbo = fboFor(pm.force);
+
+// the contact grid: G³ hashed cells × SLOTS textures of particle indices
+var grid = null;
+function makeGrid(G) {
+  var SX = G === 128 ? 16 : 8;
+  var g = { G: G, SX: SX, GShift: Math.log2(G), SXShift: Math.log2(SX), AW: SX * G, AH: (G / SX) * G, slot: [], fbo: [], depth: gl.createRenderbuffer() };
+  gl.bindRenderbuffer(gl.RENDERBUFFER, g.depth);
+  gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, g.AW, g.AH);
+  for (var k = 0; k < SLOTS; k++) {
+    g.slot.push(floatTex(g.AW, g.AH, null, gl.R32F, gl.FLOAT, gl.RED));
+    g.fbo.push(fboFor(g.slot[k], g.depth));
+  }
+  return g;
+}
+function freeGrid(g) {
+  if (!g) return;
+  for (var k = 0; k < SLOTS; k++) { gl.deleteTexture(g.slot[k]); gl.deleteFramebuffer(g.fbo[k]); }
+  gl.deleteRenderbuffer(g.depth);
+}
+
+// ---------- screen-sized targets ----------
+// material + depth pairs for the body passes, and the HDR canvas everything
+// is composed into before tone mapping
+function screenTarget(w, h, withDepth) {
+  var t = { fbo: gl.createFramebuffer(), mat: floatTex(w, h, null, gl.RGBA16F, gl.HALF_FLOAT), dep: floatTex(w, h, null, gl.RG32F, gl.FLOAT, gl.RG), rb: null };
+  gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t.mat, 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, t.dep, 0);
+  if (withDepth) {
+    t.rb = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, t.rb);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, w, h);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, t.rb);
+  }
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('screen framebuffer incomplete');
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return t;
+}
+function freeScreen(t) {
+  if (!t) return;
+  gl.deleteTexture(t.mat); gl.deleteTexture(t.dep); gl.deleteFramebuffer(t.fbo);
+  if (t.rb) gl.deleteRenderbuffer(t.rb);
+}
+var gbuf = null, blurA = null, blurB = null;
+var hdr = { fbo: gl.createFramebuffer(), tex: null, depth: gl.createRenderbuffer(), w: 0, h: 0 };
+function resize() {
+  var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  var w = Math.max(1, Math.round(canvas.clientWidth * dpr)), h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+  if (w === hdr.w && h === hdr.h) return;
+  canvas.width = w; canvas.height = h;
+  freeScreen(gbuf); freeScreen(blurA); freeScreen(blurB);
+  gbuf = screenTarget(w, h, true); blurA = screenTarget(w, h, false); blurB = screenTarget(w, h, false);
+  if (hdr.tex) gl.deleteTexture(hdr.tex);
+  hdr.tex = floatTex(w, h, null, gl.RGBA16F, gl.HALF_FLOAT);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, hdr.fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, hdr.tex, 0);
+  gl.bindRenderbuffer(gl.RENDERBUFFER, hdr.depth);
+  gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, w, h);
+  gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, hdr.depth);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  hdr.w = w; hdr.h = h;
+}
+
+// ---------- math ----------
+function mulberry(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function randRot(rng) {
+  // uniform random rotation from a random unit quaternion
+  var u1 = rng(), u2 = rng() * 6.2831853, u3 = rng() * 6.2831853;
+  var a = Math.sqrt(1 - u1), b = Math.sqrt(u1);
+  var x = a * Math.sin(u2), y = a * Math.cos(u2), z = b * Math.sin(u3), w = b * Math.cos(u3);
+  return [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+          2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+          2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)];
+}
+function perspective(fov, aspect, near, far) {
+  var f = 1 / Math.tan(fov / 2), nf = 1 / (near - far);
+  return new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0]);
+}
+function lookAt(e, c, up) {
+  var zx = e[0] - c[0], zy = e[1] - c[1], zz = e[2] - c[2];
+  var l = 1 / Math.hypot(zx, zy, zz); zx *= l; zy *= l; zz *= l;
+  var xx = up[1] * zz - up[2] * zy, xy = up[2] * zx - up[0] * zz, xz = up[0] * zy - up[1] * zx;
+  l = 1 / (Math.hypot(xx, xy, xz) || 1); xx *= l; xy *= l; xz *= l;
+  var yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+  return new Float32Array([xx, yx, zx, 0, xy, yy, zy, 0, xz, yz, zz, 0,
+    -(xx * e[0] + xy * e[1] + xz * e[2]), -(yx * e[0] + yy * e[1] + yz * e[2]), -(zx * e[0] + zy * e[1] + zz * e[2]), 1]);
+}
+function mul(a, b) {
+  var o = new Float32Array(16);
+  for (var c = 0; c < 4; c++) for (var r = 0; r < 4; r++)
+    o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+  return o;
+}
+
+// ---------- building a run ----------
+// A body is a face-centred cubic lattice clipped to a sphere: n lattice points
+// nearest the centre, spacing set by Earth density, a little jitter so nothing
+// lines up. Gravity then settles it for half a time unit before the kick.
+function ball(n, s, rng) {
+  var R = Math.cbrt(3 * n * s * s * s / (16 * Math.PI));
+  var lim = Math.ceil(R * 1.2 / s) + 1, R2 = R * R * 1.44, jit = 0.06 * s;
+  var rot = randRot(rng);
+  var basis = [0, 0, 0, 0.5, 0.5, 0, 0.5, 0, 0.5, 0, 0.5, 0.5];
+  var pts = [];
+  for (var i = -lim; i <= lim; i++) for (var j = -lim; j <= lim; j++) for (var k = -lim; k <= lim; k++) for (var b = 0; b < 4; b++) {
+    var x = (i + basis[b * 3]) * s + (rng() - 0.5) * jit;
+    var y = (j + basis[b * 3 + 1]) * s + (rng() - 0.5) * jit;
+    var z = (k + basis[b * 3 + 2]) * s + (rng() - 0.5) * jit;
+    var rx = rot[0] * x + rot[1] * y + rot[2] * z, ry = rot[3] * x + rot[4] * y + rot[5] * z, rz = rot[6] * x + rot[7] * y + rot[8] * z;
+    var d2 = rx * rx + ry * ry + rz * rz;
+    if (d2 < R2) pts.push(d2, rx, ry, rz);
+  }
+  var cnt = pts.length / 4, idx = new Array(cnt);
+  for (i = 0; i < cnt; i++) idx[i] = i;
+  idx.sort(function (p, q) { return pts[p * 4] - pts[q * 4]; });
+  var out = new Float32Array(n * 3);
+  for (i = 0; i < n; i++) { var p = idx[i] * 4; out[i * 3] = pts[p + 1]; out[i * 3 + 1] = pts[p + 2]; out[i * 3 + 2] = pts[p + 3]; }
+  return out;
+}
+
+var sim = null, posBuf = null, velBuf = null, gen = 0;
+var report = null;
+var stepAcc = 0, paused = false;
+
+function build() {
+  var N = N_CHOICES[S.nIdx];
+  var W = N >= 131072 ? 512 : N >= 32768 ? 256 : 128, H = N / W;
+  var q = S.q;
+  var m = (1 + q) / N;                               // one body-particle
+  var s = Math.cbrt(16 * Math.PI * m / 3);           // FCC cell edge at Earth density
+  var a = s / (2 * Math.SQRT2);                      // body-particle radius: nearest neighbours touch
+  var n2 = Math.max(8, Math.round(N * q / (1 + q))), n1 = N - n2;
+  var M1 = n1 * m, M2 = n2 * m, M = M1 + M2;
+  var R1 = Math.cbrt(M1), R2 = Math.cbrt(M2), Rsum = R1 + R2;
+
+  // the encounter: speed and angle are stated at contact, then walked back to
+  // the start line with energy and angular momentum; from there the two-body
+  // problem is integrated exactly while the bodies fly in rigid
+  var vesc = Math.sqrt(2 * M / Rsum);
+  var vc = S.vfac * vesc;
+  var bc = Rsum * Math.sin(S.angle * Math.PI / 180);
+  var D = Rsum + 2.4;
+  var vD = Math.sqrt(Math.max(vc * vc - 2 * M * (1 / Rsum - 1 / D), 0.04));
+  var bD = Math.min(bc * vc / vD, D * 0.95);
+  var xD = -Math.sqrt(D * D - bD * bD);
+  var c1 = [-xD * M2 / M, 0, -bD * M2 / M];         // barycentre at the origin
+  var c2 = [xD + c1[0], 0, bD + c1[2]];
+  var rel = { r: [xD, 0, bD], v: [vD, 0, 0] };       // impactor relative to target
+  var bulk0 = [0, 0, 0], bulk1 = [0, 0, 0];
+
+  // contact spring: half a radius of overlap at the reference speed; the step
+  // follows from the spring's period
+  var vref = Math.max(1.5, vc);
+  var k = 4 * m * vref * vref / (a * a);
+  var omega = Math.sqrt(2 * k / m);
+  var dt = 0.35 / omega;                             // the spring-dashpot is stable to ~1.4/ω; a contact still gets nine steps
+  var lnE = Math.log(S.rest), zeta = -lnE / Math.sqrt(Math.PI * Math.PI + lnE * lnE);
+  var cd = 2 * zeta * Math.sqrt(k * m / 2);
+
+  var rng = mulberry(1234567);
+  var b1 = ball(n1, s, rng), b2 = ball(n2, s, rng);
+  var pos = new Float32Array(N * 4), vel = new Float32Array(N * 4);
+  var i;
+  for (i = 0; i < n1; i++) { pos[i * 4] = b1[i * 3] + c1[0]; pos[i * 4 + 1] = b1[i * 3 + 1] + c1[1]; pos[i * 4 + 2] = b1[i * 3 + 2] + c1[2]; pos[i * 4 + 3] = 0; }
+  for (i = 0; i < n2; i++) { var o = (n1 + i) * 4; pos[o] = b2[i * 3] + c2[0]; pos[o + 1] = b2[i * 3 + 1] + c2[1]; pos[o + 2] = b2[i * 3 + 2] + c2[2]; pos[o + 3] = 1; }
+
+  if (sim) { freeTarget(sim.src); freeTarget(sim.dst); }
+  var G = N >= 65536 ? 128 : 64;
+  if (!grid || grid.G !== G) { freeGrid(grid); grid = makeGrid(G); }
+  var settle = Math.ceil(0.3 / dt);
+  sim = {
+    N: N, W: W, H: H, n1: n1, n2: n2, m: m, a: a, cell: 2.6 * a, dt: dt, k: k, c: cd,
+    R1: R1, R2: R2, M1: M1, M2: M2, M: M, rel: rel, bulk0: bulk0, bulk1: bulk1, vc: vc, vesc: vesc,
+    src: simTarget(W, H, pos, vel), dst: simTarget(W, H, null, null),
+    t: 0, phase: 'settle', settleLeft: settle, settleTotal: settle, impactT: -1, com1: [0, 0, 0], stepNo: 0,
+    damp: Math.exp(-dt * 12), cool: Math.exp(-dt / 12), heatK: 0.7 / m, gen: ++gen
+  };
+  setStaticUniforms();
+  report = null; stepAcc = 0; paused = false;
+  $('btn-pause').textContent = 'pause';
+  $('hud-report').hidden = true;
+  camTarget = [0, 0, 0];
+  updateDustK();
+}
+
+// the dust offsets are baked once into a buffer: same cloud, no hashing or
+// trigonometry per vertex per frame
+function updateDustK() {
+  if (!sim) return;
+  sim.K = S.dust > 0 ? Math.max(1, Math.round(S.dust / sim.N)) : 0;
+  var count = sim.N * sim.K;
+  if (count === dust.count) return;
+  var rng = mulberry(99), data = new Int8Array(count * 4);
+  for (var i = 0; i < count; i++) {
+    var z = rng() * 2 - 1, ph = rng() * 6.2831853, r = Math.cbrt(rng()), q = Math.sqrt(1 - z * z);
+    data[i * 4] = Math.round(q * Math.cos(ph) * r * 127);
+    data[i * 4 + 1] = Math.round(q * Math.sin(ph) * r * 127);
+    data[i * 4 + 2] = Math.round(z * r * 127);
+    data[i * 4 + 3] = Math.round((rng() * 2 - 1) * 127);
+  }
+  gl.bindVertexArray(dust.vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, dust.buf);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  var loc = gl.getAttribLocation(dustProg.p, 'aOff');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 4, gl.BYTE, true, 4, 0);
+  gl.bindVertexArray(vao);
+  dust.count = count;
+}
+
+// Uniforms that hold for the whole run are set once here; the passes below
+// only bind targets and textures and touch what changes.
+function setStaticUniforms() {
+  var g = grid, u, s;
+  u = slotProg.u; gl.useProgram(slotProg.p);
+  gl.uniform1i(u.uPos, 0);
+  for (s = 0; s < SLOTS; s++) gl.uniform1i(u['uS' + s], 1 + s);
+  gl.uniform2i(u.uSize, sim.W, sim.H);
+  gl.uniform1f(u.uInvCell, 1 / sim.cell);
+  gl.uniform1i(u.uGMask, g.G - 1); gl.uniform1i(u.uGShift, g.GShift);
+  gl.uniform1i(u.uSXMask, g.SX - 1); gl.uniform1i(u.uSXShift, g.SXShift);
+  gl.uniform2f(u.uAtlas, g.AW, g.AH);
+  gl.uniform1f(u.uInvN, 1 / sim.N);
+
+  u = depProg.u; gl.useProgram(depProg.p);
+  gl.uniform1i(u.uPos, 0);
+  gl.uniform2i(u.uSize, sim.W, sim.H);
+  gl.uniform1f(u.uInvH, 1 / FH);
+  gl.uniform1f(u.uL, FL);
+
+  gl.useProgram(coarseProg.p); gl.uniform1i(coarseProg.u.uFine, 0);
+  gl.useProgram(monoProg.p); gl.uniform1i(monoProg.u.uCoarse, 0);
+
+  u = cellProg.u; gl.useProgram(cellProg.p);
+  gl.uniform1i(u.uFine, 0); gl.uniform1i(u.uCoarse, 1);
+  gl.uniform1f(u.uH, FH);
+  gl.uniform1f(u.uL, FL);
+  gl.uniform1f(u.uEps2, 0.5 * FH * FH);
+  gl.uniform1f(u.uGm, sim.m);
+
+  u = simProg.u; gl.useProgram(simProg.p);
+  gl.uniform1i(u.uPos, 0); gl.uniform1i(u.uVel, 1); gl.uniform1i(u.uForce, 2); gl.uniform1i(u.uMono, 3);
+  for (s = 0; s < SLOTS; s++) gl.uniform1i(u['uS' + s], 4 + s);
+  gl.uniform2i(u.uSize, sim.W, sim.H);
+  gl.uniform1f(u.uInvCell, 1 / sim.cell);
+  gl.uniform1f(u.uCell, sim.cell);
+  gl.uniform1i(u.uGMask, g.G - 1); gl.uniform1i(u.uGShift, g.GShift);
+  gl.uniform1i(u.uSXMask, g.SX - 1); gl.uniform1i(u.uSXShift, g.SXShift);
+  gl.uniform1f(u.uInvH, 1 / FH);
+  gl.uniform1f(u.uL, FL);
+  gl.uniform1f(u.uDt, sim.dt);
+  gl.uniform1f(u.uGm, sim.m);
+  gl.uniform1f(u.uEps2, FH * FH);
+  gl.uniform1f(u.uTouch, 2 * sim.a);
+  gl.uniform1f(u.uLink2, sim.cell * sim.cell);
+  gl.uniform1f(u.uK, sim.k);
+  gl.uniform1f(u.uC, sim.c);
+  gl.uniform1f(u.uInvM, 1 / sim.m);
+  gl.uniform1f(u.uDamp, sim.damp);
+  gl.uniform1f(u.uCool, sim.cool);
+  gl.uniform1f(u.uHeatK, sim.heatK);
+
+  u = rigidProg.u; gl.useProgram(rigidProg.p);
+  gl.uniform1i(u.uPos, 0); gl.uniform1i(u.uVel, 1); gl.uniform1i(u.uAux, 2);
+}
+
+// 1. contact cells, one slot per pass
+function passSlots() {
+  var g = grid, s, k;
+  gl.useProgram(slotProg.p);
+  gl.viewport(0, 0, g.AW, g.AH);
+  gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); gl.depthMask(true); gl.disable(gl.BLEND);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sim.src.pos);
+  gl.clearColor(-1, 0, 0, 0);
+  for (k = 0; k < SLOTS; k++) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, g.fbo[k]);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    for (s = 0; s < SLOTS; s++) { gl.activeTexture(gl.TEXTURE1 + s); gl.bindTexture(gl.TEXTURE_2D, s < k ? g.slot[s] : dummy); }
+    gl.uniform1i(slotProg.u.uK, k);
+    gl.drawArrays(gl.POINTS, 0, sim.N);
+  }
+  gl.disable(gl.DEPTH_TEST); gl.depthMask(false);
+}
+
+// 2. mass onto the mesh
+function passDeposit() {
+  gl.useProgram(depProg.p);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pm.fineFbo);
+  gl.viewport(0, 0, 512, 512);
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sim.src.pos);
+  gl.drawArrays(gl.POINTS, 0, sim.N * 8);
+  gl.disable(gl.BLEND);
+}
+
+// 3. the coarse mesh, 4. its total
+function passCoarse() {
+  gl.useProgram(coarseProg.p);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pm.coarseFbo);
+  gl.viewport(0, 0, 64, 64);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, pm.fine);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.useProgram(monoProg.p);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pm.monoFbo);
+  gl.viewport(0, 0, 1, 1);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, pm.coarse);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+// 5. gravity at every occupied cell
+function passCell() {
+  gl.useProgram(cellProg.p);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pm.forceFbo);
+  gl.viewport(0, 0, 512, 512);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, pm.fine);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, pm.coarse);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+// 6. the particles: read src, write dst, swap
+function passSim(settle, kick) {
+  var g = grid, u = simProg.u, s;
+  gl.useProgram(simProg.p);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, sim.dst.fbo);
+  gl.viewport(0, 0, sim.W, sim.H);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sim.src.pos);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, sim.src.vel);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, pm.force);
+  gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, pm.mono);
+  for (s = 0; s < SLOTS; s++) { gl.activeTexture(gl.TEXTURE4 + s); gl.bindTexture(gl.TEXTURE_2D, g.slot[s]); }
+  gl.uniform1f(u.uSettle, settle ? 1 : 0);
+  gl.uniform1f(u.uKick, kick ? 1 : 0);
+  gl.uniform3fv(u.uBulk0, sim.bulk0);
+  gl.uniform3fv(u.uBulk1, sim.bulk1);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  var t = sim.src; sim.src = sim.dst; sim.dst = t;
+}
+
+// One step. The contact cells are rebuilt every other step — a particle moves
+// under 0.2 radii a step and the search radius has 0.6 to spare — and the
+// gravity mesh every fourth: gravity changes on the scale of a time unit,
+// a step is a thousandth of one.
+function step(settle, kick) {
+  var n = sim.stepNo++;
+  if (n % 2 === 0) passSlots();
+  if (n % 4 === 0) { passDeposit(); passCoarse(); passCell(); }
+  passSim(settle, kick);
+}
+
+// settling: n damped steps; when done, the approach begins
+function settleSome(n) {
+  n = Math.min(n, sim.settleLeft);
+  for (var i = 0; i < n; i++) step(true, false);
+  sim.settleLeft -= n;
+  if (sim.settleLeft === 0) sim.phase = 'approach';
+}
+
+// the approach: the two-body problem, leapfrog on the CPU, the bodies carried
+// rigid on the GPU by the frame's mean velocities; at first touch, the kick
+function rigidStep(dtF) {
+  var r = sim.rel.r, v = sim.rel.v, M = sim.M, M1 = sim.M1, M2 = sim.M2;
+  var r0 = [r[0], r[1], r[2]], n = 8, h = dtF / n, i;
+  function acc() { var d2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2], f = -M * Math.pow(d2, -1.5); return [r[0] * f, r[1] * f, r[2] * f]; }
+  var a = acc();
+  for (i = 0; i < n; i++) {
+    v[0] += a[0] * h * 0.5; v[1] += a[1] * h * 0.5; v[2] += a[2] * h * 0.5;
+    r[0] += v[0] * h; r[1] += v[1] * h; r[2] += v[2] * h;
+    a = acc();
+    v[0] += a[0] * h * 0.5; v[1] += a[1] * h * 0.5; v[2] += a[2] * h * 0.5;
+  }
+  var mv = [(r[0] - r0[0]) / dtF, (r[1] - r0[1]) / dtF, (r[2] - r0[2]) / dtF];
+  sim.bulk0 = [-mv[0] * M2 / M, -mv[1] * M2 / M, -mv[2] * M2 / M];
+  sim.bulk1 = [mv[0] * M1 / M, mv[1] * M1 / M, mv[2] * M1 / M];
+  var u = rigidProg.u;
+  gl.useProgram(rigidProg.p);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, sim.dst.fbo);
+  gl.viewport(0, 0, sim.W, sim.H);
+  gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sim.src.pos);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, sim.src.vel);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, sim.src.aux);
+  gl.uniform3fv(u.uBulk0, sim.bulk0);
+  gl.uniform3fv(u.uBulk1, sim.bulk1);
+  gl.uniform1f(u.uDt, dtF);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  var t = sim.src; sim.src = sim.dst; sim.dst = t;
+  sim.t += dtF;
+  if (Math.hypot(r[0], r[1], r[2]) <= sim.R1 + sim.R2 + 2 * sim.a) {
+    sim.bulk0 = [-v[0] * M2 / M, -v[1] * M2 / M, -v[2] * M2 / M];
+    sim.bulk1 = [v[0] * M1 / M, v[1] * M1 / M, v[2] * M1 / M];
+    sim.stepNo = 0;           // the bodies have moved: rebuild cells and mesh
+    step(false, true);
+    sim.t += sim.dt;
+    sim.phase = 'full';
+    sim.impactT = sim.t;
+  }
+}
+
+// ---------- who is where: clumps, orbits, escapes ----------
+// Friends-of-friends on the CPU every few frames: anything within 2.4 radii
+// is the same body. The largest group is "the planet"; everything else is in
+// orbit around it or on its way out, by its energy in the planet's frame.
+// Self-contained so it can run in a worker: positions and velocities in,
+// the report out. Counting sort into hashed cells, then union-find.
+function fof(N, m, a, P, V) {
+  var L = 2.4 * a, L2 = L * L, inv = 1 / L;
+  var T = 1 << 20, TM = T - 1;
+  var cx = new Int32Array(N), cy = new Int32Array(N), cz = new Int32Array(N), key = new Int32Array(N);
+  var cnt = new Int32Array(T + 1), i, j, k, s;
+  for (i = 0; i < N; i++) {
+    var qx = Math.floor(P[i * 4] * inv), qy = Math.floor(P[i * 4 + 1] * inv), qz = Math.floor(P[i * 4 + 2] * inv);
+    cx[i] = qx; cy[i] = qy; cz[i] = qz;
+    k = ((qx * 73856093) ^ (qy * 19349663) ^ (qz * 83492791)) & TM;
+    key[i] = k; cnt[k + 1]++;
+  }
+  for (k = 0; k < T; k++) cnt[k + 1] += cnt[k];
+  var fill = new Int32Array(cnt.subarray(0, T)), order = new Int32Array(N);
+  for (i = 0; i < N; i++) order[fill[key[i]]++] = i;
+  var uf = new Int32Array(N);
+  for (i = 0; i < N; i++) uf[i] = i;
+  function find(x) { while (uf[x] !== x) { uf[x] = uf[uf[x]]; x = uf[x]; } return x; }
+  for (i = 0; i < N; i++) {
+    var px = P[i * 4], py = P[i * 4 + 1], pz = P[i * 4 + 2];
+    for (var dz = -1; dz <= 1; dz++) for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
+      k = (((cx[i] + dx) * 73856093) ^ ((cy[i] + dy) * 19349663) ^ ((cz[i] + dz) * 83492791)) & TM;
+      for (s = cnt[k]; s < cnt[k + 1]; s++) {
+        j = order[s];
+        if (j <= i) continue;
+        var ex = P[j * 4] - px, ey = P[j * 4 + 1] - py, ez = P[j * 4 + 2] - pz;
+        if (ex * ex + ey * ey + ez * ez < L2) { var ri = find(i), rj = find(j); if (ri !== rj) uf[ri] = rj; }
+      }
+    }
+  }
+  var size = new Int32Array(N);
+  for (i = 0; i < N; i++) size[find(i)]++;
+  var g1 = -1, g2 = -1;
+  for (i = 0; i < N; i++) if (size[i] > 0) {
+    if (g1 < 0 || size[i] > size[g1]) { g2 = g1; g1 = i; }
+    else if (g2 < 0 || size[i] > size[g2]) g2 = i;
+  }
+  function stats(root) {
+    var n = 0, x = 0, y = 0, z = 0, vx = 0, vy = 0, vz = 0, imp = 0;
+    for (var t = 0; t < N; t++) if (find(t) === root) {
+      n++; x += P[t * 4]; y += P[t * 4 + 1]; z += P[t * 4 + 2];
+      vx += V[t * 4]; vy += V[t * 4 + 1]; vz += V[t * 4 + 2];
+      if (P[t * 4 + 3] > 0.5) imp++;
+    }
+    return { n: n, mass: n * m, com: [x / n, y / n, z / n], vel: [vx / n, vy / n, vz / n], imp: imp, R: Math.cbrt(n * m) };
+  }
+  var A = stats(g1), B = g2 >= 0 ? stats(g2) : null;
+  function energy(x, y, z, vx, vy, vz) {
+    var r = Math.sqrt((x - A.com[0]) * (x - A.com[0]) + (y - A.com[1]) * (y - A.com[1]) + (z - A.com[2]) * (z - A.com[2]));
+    var dv2 = (vx - A.vel[0]) * (vx - A.vel[0]) + (vy - A.vel[1]) * (vy - A.vel[1]) + (vz - A.vel[2]) * (vz - A.vel[2]);
+    return 0.5 * dv2 - A.mass / Math.max(r, A.R);
+  }
+  var orbit = 0, esc = 0;
+  for (i = 0; i < N; i++) if (find(i) !== g1) {
+    if (energy(P[i * 4], P[i * 4 + 1], P[i * 4 + 2], V[i * 4], V[i * 4 + 1], V[i * 4 + 2]) < 0) orbit++; else esc++;
+  }
+  var second = null;
+  if (B && B.n >= Math.max(8, N / 1000)) {
+    var dAB = Math.sqrt((B.com[0] - A.com[0]) * (B.com[0] - A.com[0]) + (B.com[1] - A.com[1]) * (B.com[1] - A.com[1]) + (B.com[2] - A.com[2]) * (B.com[2] - A.com[2]));
+    if (dAB > A.R + B.R + 2 * a) second = { mass: B.mass, dist: dAB, bound: energy(B.com[0], B.com[1], B.com[2], B.vel[0], B.vel[1], B.vel[2]) < 0, imp: B.imp / B.n };
+  }
+  return { largest: A.mass, largestImp: A.imp / A.n, orbit: orbit * m, escape: esc * m, second: second, com: A.com };
+}
+
+// the analysis runs in a worker when it can (a quarter million bodies take
+// tens of milliseconds); the buffers go back and forth without copying
+var worker = null, analyzing = false;
+try {
+  var src = fof.toString() + '\nself.onmessage = function (e) { var d = e.data; var r = fof(d.N, d.m, d.a, d.P, d.V); self.postMessage({ gen: d.gen, r: r, P: d.P, V: d.V }, [d.P.buffer, d.V.buffer]); };';
+  worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+  worker.onmessage = function (e) {
+    analyzing = false;
+    posBuf = e.data.P; velBuf = e.data.V;
+    if (sim && e.data.gen === sim.gen) applyReport(e.data.r);
+  };
+  worker.onerror = function () { worker = null; analyzing = false; };
+} catch (e) { worker = null; }
+function applyReport(r) { report = r; sim.com1 = r.com; }
+function analyze(sync) {
+  if (analyzing && !sync) return;
+  var N = sim.N;
+  var P = (!sync && posBuf && posBuf.length === N * 4) ? posBuf : new Float32Array(N * 4);
+  var V = (!sync && velBuf && velBuf.length === N * 4) ? velBuf : new Float32Array(N * 4);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, sim.src.fbo);
+  gl.readBuffer(gl.COLOR_ATTACHMENT0); gl.readPixels(0, 0, sim.W, sim.H, gl.RGBA, gl.FLOAT, P);
+  gl.readBuffer(gl.COLOR_ATTACHMENT1); gl.readPixels(0, 0, sim.W, sim.H, gl.RGBA, gl.FLOAT, V);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  if (worker && !sync) {
+    analyzing = true;
+    posBuf = null; velBuf = null;
+    worker.postMessage({ gen: sim.gen, N: N, m: sim.m, a: sim.a, P: P, V: V }, [P.buffer, V.buffer]);
+  } else {
+    applyReport(fof(N, sim.m, sim.a, P, V));
+  }
+}
+
+// ---------- camera ----------
+var cam = { yaw: 0.35, pitch: 0.42, dist: 7.5 };
+var camTarget = [0, 0, 0], camPos = [0, 0, 0];
+var pointers = new Map(), pinch0 = 0, dist0 = 0;
+canvas.addEventListener('pointerdown', function (e) {
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  if (pointers.size === 2) { var p = Array.from(pointers.values()); pinch0 = Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]); dist0 = cam.dist; }
+  canvas.classList.add('dragging');
+});
+canvas.addEventListener('pointermove', function (e) {
+  var prev = pointers.get(e.pointerId);
+  if (!prev) return;
+  var cur = [e.clientX, e.clientY];
+  if (pointers.size === 1) {
+    cam.yaw -= (cur[0] - prev[0]) * 0.005;
+    cam.pitch = Math.max(-1.5, Math.min(1.5, cam.pitch + (cur[1] - prev[1]) * 0.005));
+  }
+  pointers.set(e.pointerId, cur);
+  if (pointers.size === 2 && pinch0 > 0) {
+    var p = Array.from(pointers.values());
+    var d = Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]);
+    cam.dist = Math.max(1.5, Math.min(80, dist0 * pinch0 / Math.max(d, 1)));
+  }
+});
+function endPointer(e) { pointers.delete(e.pointerId); if (pointers.size === 0) canvas.classList.remove('dragging'); }
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('wheel', function (e) {
+  e.preventDefault();
+  cam.dist = Math.max(1.5, Math.min(80, cam.dist * Math.exp(e.deltaY * 0.0012)));
+}, { passive: false });
+
+// ---------- drawing ----------
+var SUN = (function () { var v = [-0.6, 0.45, 0.6], l = Math.hypot(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; })();
+function render() {
+  var w = hdr.w, h = hdr.h;
+  var goal = (S.follow && sim) ? sim.com1 : [0, 0, 0];
+  for (var i = 0; i < 3; i++) camPos[i] += (goal[i] - camPos[i]) * 0.08;
+  var cy = Math.cos(cam.pitch), sy = Math.sin(cam.pitch);
+  var eye = [camPos[0] + cam.dist * cy * Math.sin(cam.yaw), camPos[1] + cam.dist * sy, camPos[2] + cam.dist * cy * Math.cos(cam.yaw)];
+  var proj = perspective(FOV, w / h, 0.05, 3000), view = lookAt(eye, camPos, [0, 1, 0]);
+  var vp = mul(proj, view);
+  var px = (h / 2) / Math.tan(FOV / 2);
+
+  var sunEye = [
+    view[0] * SUN[0] + view[4] * SUN[1] + view[8] * SUN[2],
+    view[1] * SUN[0] + view[5] * SUN[1] + view[9] * SUN[2],
+    view[2] * SUN[0] + view[6] * SUN[1] + view[10] * SUN[2]];
+
+  if (sim) {
+    // 1. the bodies as sphere impostors: material, heat, depth
+    var g = gProg.u;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, gbuf.fbo);
+    gl.viewport(0, 0, w, h);
+    gl.clearColor(0, 0, 0, 0);
+    gl.depthMask(true);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LESS);
+    gl.disable(gl.BLEND);
+    gl.useProgram(gProg.p);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sim.src.pos);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, sim.src.vel);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, sim.src.aux);
+    gl.uniform1i(g.uPos, 0); gl.uniform1i(g.uVel, 1); gl.uniform1i(g.uAux, 2);
+    gl.uniform2i(g.uSize, sim.W, sim.H);
+    gl.uniformMatrix4fv(g.uView, false, view);
+    gl.uniformMatrix4fv(g.uProj, false, proj);
+    gl.uniform1f(g.uRad, sim.a);
+    gl.uniform1f(g.uPx, px);
+    gl.uniform1f(g.uMaxPt, MAX_POINT);
+    gl.uniform1f(g.uP22, proj[10]);
+    gl.uniform1f(g.uP32, proj[14]);
+    gl.uniform3fv(g.uCol0, COL_TARGET);
+    gl.uniform3fv(g.uCol1, COL_IMPACTOR);
+    gl.drawArrays(gl.POINTS, 0, sim.N);
+
+    // 2. bilateral blur, two particles wide, x then y, twice over
+    var rpx = sim.a * px / cam.dist * 2.0;
+    var taps = Math.max(1, Math.min(12, Math.round(rpx)));
+    var b = blurProg.u;
+    gl.disable(gl.DEPTH_TEST);
+    gl.useProgram(blurProg.p);
+    gl.uniform1i(b.uMat, 0); gl.uniform1i(b.uDep, 1);
+    gl.uniform1i(b.uTaps, taps);
+    gl.uniform1f(b.uStep, Math.max(1, rpx / taps));
+    gl.uniform1f(b.uRange, 4.0 * sim.a);
+    gl.uniform2i(b.uRes, w, h);
+    var from = gbuf, ping = [blurA, blurB];
+    for (var pass = 0; pass < 4; pass++) {
+      var to = ping[pass & 1];
+      gl.bindFramebuffer(gl.FRAMEBUFFER, to.fbo);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, from.mat);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, from.dep);
+      gl.uniform2i(b.uDir, 1 - (pass & 1), pass & 1);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      from = to;
+    }
+  }
+
+  // 3. compose: the lit skin, then stars and dust over it
+  gl.bindFramebuffer(gl.FRAMEBUFFER, hdr.fbo);
+  gl.viewport(0, 0, w, h);
+  gl.clearColor(0, 0, 0, 1);
+  gl.depthMask(true);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST);
+  gl.disable(gl.BLEND);
+  if (sim) {
+    var s = shadeProg.u;
+    gl.depthFunc(gl.ALWAYS);
+    gl.useProgram(shadeProg.p);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, blurB.mat);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, blurB.dep);
+    gl.uniform1i(s.uMat, 0); gl.uniform1i(s.uDep, 1);
+    gl.uniform2f(s.uInvP, 1 / proj[0], 1 / proj[5]);
+    gl.uniform2f(s.uRes, w, h);
+    gl.uniform3fv(s.uSunEye, sunEye);
+    gl.uniform1f(s.uGlow, S.glow);
+    gl.uniform1f(s.uP22, proj[10]);
+    gl.uniform1f(s.uP32, proj[14]);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  gl.depthFunc(gl.LESS);
+  gl.depthMask(false);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.ONE, gl.ONE);
+  if (S.stars) {
+    gl.useProgram(starProg.p);
+    gl.uniformMatrix4fv(starProg.u.uVP, false, vp);
+    gl.uniform3fv(starProg.u.uEye, eye);
+    gl.uniform1f(starProg.u.uBright, 0.9);
+    gl.drawArrays(gl.POINTS, 0, STAR_COUNT);
+  }
+  if (sim) {
+    var u = dustProg.u;
+    gl.useProgram(dustProg.p);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sim.src.pos);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, sim.src.vel);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, sim.src.aux);
+    gl.uniform1i(u.uPos, 0); gl.uniform1i(u.uVel, 1); gl.uniform1i(u.uAux, 2);
+    gl.uniform2i(u.uSize, sim.W, sim.H);
+    gl.uniform1i(u.uK, sim.K);
+    gl.uniformMatrix4fv(u.uVP, false, vp);
+    gl.uniform3fv(u.uSun, SUN);
+    gl.uniform1f(u.uRad, sim.a);
+    gl.uniform1f(u.uSpread, 1.6);
+    gl.uniform1f(u.uPx, px);
+    var energy = 1.8 * (1e6 / (sim.N * sim.K)) * (7.5 / cam.dist) * (7.5 / cam.dist) * (h / 1000) * (h / 1000);
+    gl.uniform1f(u.uEnergy, energy);
+    gl.uniform1f(u.uGlow, S.glow);
+    gl.uniform1f(u.uShade, S.shade ? 1 : 0);
+    gl.uniform3fv(u.uCol0, COL_TARGET);
+    gl.uniform3fv(u.uCol1, COL_IMPACTOR);
+    gl.bindVertexArray(dust.vao);
+    gl.drawArrays(gl.POINTS, 0, sim.N * sim.K);
+    gl.bindVertexArray(vao);
+  }
+  gl.disable(gl.BLEND);
+  gl.disable(gl.DEPTH_TEST);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, w, h);
+  gl.useProgram(toneProg.p);
+  var dbg = window.DBG | 0;
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, dbg === 1 ? gbuf.dep : dbg === 2 ? blurA.dep : dbg === 3 ? blurB.dep : hdr.tex);
+  gl.uniform1i(toneProg.u.uHdr, 0);
+  gl.uniform1f(toneProg.u.uDbg, dbg ? 1 : 0);
+  gl.uniform1f(toneProg.u.uExposure, S.exposure);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+// ---------- HUD ----------
+function fmtMass(x) { return x.toFixed(3) + ' M⊕'; }
+function fmtTime(t) {
+  var sec = t * T_UNIT, hh = Math.floor(sec / 3600), mm = Math.floor((sec % 3600) / 60);
+  return 'T+ ' + hh + 'h ' + (mm < 10 ? '0' : '') + mm + 'm';
+}
+function fmtCount(n) { return n >= 1e6 ? (n / 1e6).toFixed(n % 1e6 ? 1 : 0) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n); }
+var fpsFrames = 0, fpsT0 = performance.now(), fps = 0;
+function hud() {
+  var sub = PRESETS[S.preset] ? PRESETS[S.preset].label : 'custom';
+  if (!sim) sub += ' · building';
+  else if (sim.phase === 'settle') sub += ' · settling ' + Math.round(100 * (1 - sim.settleLeft / sim.settleTotal)) + '%';
+  else if (paused) sub += ' · paused';
+  else if (sim.phase === 'approach') sub += ' · approach';
+  else if (sim.t - sim.impactT < 2.5) sub += ' · impact';
+  else sub += ' · aftermath';
+  $('hud-sub').textContent = sub;
+  $('hud-clock').textContent = sim ? fmtTime(sim.t) : 'T+ 0h 00m';
+  $('hud-fps').textContent = sim ? fmtCount(sim.N) + ' bodies · ' + fmtCount(sim.N * sim.K) + ' dust · ' + Math.round(sim.vc * V_UNIT) + ' km/s · ' + fps + ' fps' : '';
+  var rep = $('hud-report');
+  if (report && sim) {
+    var lines = ['<b>largest</b>  ' + fmtMass(report.largest) + ' <i>' + Math.round(report.largestImp * 100) + '% impactor</i>'];
+    lines.push('<b>in orbit</b> ' + fmtMass(report.orbit));
+    lines.push('<b>escaping</b> ' + fmtMass(report.escape));
+    if (report.second) lines.push('<b>2nd body</b> ' + fmtMass(report.second.mass) + ' <i>· ' + report.second.dist.toFixed(1) + ' R⊕ · ' + (report.second.bound ? 'bound' : 'unbound') + '</i>');
+    rep.innerHTML = lines.join('\n');
+    rep.hidden = false;
+  }
+}
+
+// ---------- the loop ----------
+var frameNo = 0;
+function frame() {
+  requestAnimationFrame(frame);
+  resize();
+  if (sim) {
+    if (sim.phase === 'settle') settleSome(Math.max(2, Math.round(65536 / sim.N * 8)));
+    else if (!paused) {
+      if (sim.phase === 'approach') rigidStep(0.0025 * S.speed);
+      else {
+        stepAcc += S.speed;
+        var guard = 0;
+        while (stepAcc >= 1 && guard++ < 32 && sim.phase === 'full') { step(false, false); sim.t += sim.dt; stepAcc -= 1; }
+      }
+    }
+  }
+  render();
+  if (sim && sim.phase !== 'settle' && frameNo % 45 === 0) analyze();
+  frameNo++;
+  fpsFrames++;
+  var now = performance.now();
+  if (now - fpsT0 > 500) { fps = Math.round(fpsFrames * 1000 / (now - fpsT0)); fpsFrames = 0; fpsT0 = now; }
+  hud();
+}
+
+// ---------- controls ----------
+function setOn(container, attr, value) {
+  container.querySelectorAll('button[' + attr + ']').forEach(function (b) { b.classList.toggle('on', b.getAttribute(attr) === String(value)); });
+}
+function syncSliders() {
+  $('set-q').value = S.q; $('val-q').textContent = S.q.toFixed(2) + ' M⊕';
+  $('set-angle').value = S.angle; $('val-angle').textContent = S.angle + '°';
+  $('set-vfac').value = S.vfac; $('val-vfac').textContent = S.vfac.toFixed(2) + ' v.esc';
+  $('set-n').value = S.nIdx; $('val-n').textContent = N_LABELS[S.nIdx];
+  $('set-rest').value = S.rest; $('val-rest').textContent = S.rest.toFixed(2);
+  $('set-dust').value = S.dust; $('val-dust').textContent = fmtCount(S.dust);
+  $('set-exp').value = S.exposure; $('val-exp').textContent = S.exposure.toFixed(1);
+  $('set-glow').value = S.glow; $('val-glow').textContent = S.glow.toFixed(1);
+  $('val-shade').textContent = S.shade ? 'on' : 'off';
+  $('val-stars').textContent = S.stars ? 'on' : 'off';
+}
+$('hud-preset').addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-preset]');
+  if (!b) return;
+  var p = PRESETS[b.getAttribute('data-preset')];
+  S.preset = b.getAttribute('data-preset'); S.q = p.q; S.angle = p.angle; S.vfac = p.vfac;
+  cam.dist = p.dist;
+  setOn($('hud-preset'), 'data-preset', S.preset);
+  syncSliders();
+  build();
+});
+$('hud-run').addEventListener('click', function (e) {
+  var b = e.target.closest('button');
+  if (!b) return;
+  if (b.id === 'btn-pause') togglePause();
+  else if (b.id === 'btn-restart') build();
+  else if (b.id === 'btn-follow') { S.follow = !S.follow; b.classList.toggle('on', S.follow); }
+  else if (b.hasAttribute('data-speed')) { S.speed = parseFloat(b.getAttribute('data-speed')); setOn($('hud-run'), 'data-speed', S.speed); }
+});
+function togglePause() { paused = !paused; $('btn-pause').textContent = paused ? 'resume' : 'pause'; }
+$('adv-toggle').addEventListener('click', function () {
+  var p = $('adv-panel'); p.hidden = !p.hidden; $('adv-toggle').classList.toggle('on', !p.hidden);
+});
+function custom() { S.preset = 'custom'; setOn($('hud-preset'), 'data-preset', ''); }
+function onRange(id, live, apply, keepPreset) {
+  var el = $(id);
+  el.addEventListener('input', function () { apply(parseFloat(el.value)); syncSliders(); if (live) live(); });
+  if (!live) el.addEventListener('change', function () { if (!keepPreset) custom(); build(); });
+}
+onRange('set-q', null, function (v) { S.q = v; });
+onRange('set-angle', null, function (v) { S.angle = v; });
+onRange('set-vfac', null, function (v) { S.vfac = v; });
+onRange('set-n', null, function (v) { S.nIdx = v | 0; }, true);
+onRange('set-rest', null, function (v) { S.rest = v; }, true);
+onRange('set-dust', updateDustK, function (v) { S.dust = v; });
+onRange('set-exp', function () {}, function (v) { S.exposure = v; });
+onRange('set-glow', function () {}, function (v) { S.glow = v; });
+$('set-shade').addEventListener('change', function () { S.shade = $('set-shade').checked; syncSliders(); });
+$('set-stars').addEventListener('change', function () { S.stars = $('set-stars').checked; syncSliders(); });
+window.addEventListener('keydown', function (e) {
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON')) return;
+  if (e.code === 'Space') { e.preventDefault(); if (sim && sim.phase !== 'settle') togglePause(); }
+  else if (e.code === 'KeyR') build();
+  else if (e.code === 'KeyF') { S.follow = !S.follow; $('btn-follow').classList.toggle('on', S.follow); }
+});
+
+// for scripted screenshots: run straight to a sim time (in time units) and hold
+window.__impact = {
+  // GPU time per pass, averaged over reps, via timer queries (Chrome desktop)
+  profile: function (reps) {
+    var ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    if (!ext) return Promise.resolve('no timer queries');
+    reps = reps || 20;
+    var K = sim.K, stars = S.stars;
+    var items = [
+      ['slots', passSlots], ['deposit', passDeposit], ['coarse+mono', passCoarse], ['cell', passCell],
+      ['sim', function () { passSim(false, false); }], ['step', function () { step(false, false); }],
+      ['render', render],
+      ['render, no dust', function () { sim.K = 0; render(); sim.K = K; }],
+      ['render, no dust, no stars', function () { sim.K = 0; S.stars = false; render(); sim.K = K; S.stars = stars; }]
+    ];
+    var qs = items.map(function () { return gl.createQuery(); });
+    items.forEach(function (it, i) { gl.beginQuery(ext.TIME_ELAPSED_EXT, qs[i]); for (var r = 0; r < reps; r++) it[1](); gl.endQuery(ext.TIME_ELAPSED_EXT); });
+    return new Promise(function (resolve) {
+      (function poll() {
+        if (gl.getParameter(ext.GPU_DISJOINT_EXT)) { resolve('disjoint, retry'); return; }
+        if (!qs.every(function (q) { return gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE); })) { setTimeout(poll, 50); return; }
+        var out = {};
+        qs.forEach(function (q, i) { out[items[i][0]] = +(gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6 / reps).toFixed(3); });
+        resolve(out);
+      })();
+    });
+  },
+  runTo: function (t) {
+    if (sim.t > t) build();
+    while (sim.phase === 'settle') settleSome(64);
+    while (sim.phase === 'approach' && sim.t < t) rigidStep(0.01);
+    while (sim.phase === 'full' && sim.t < t) { step(false, false); sim.t += sim.dt; }
+    analyze(true);
+    paused = true; $('btn-pause').textContent = 'resume';
+    return sim.t;
+  }
+};
+
+syncSliders();
+resize();
+build();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
