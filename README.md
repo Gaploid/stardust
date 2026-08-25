@@ -99,38 +99,28 @@ in slices and costs ~2 MB of RAM whatever the count.
 
 Broad strokes, newest first; the commit history tells each one in full.
 
-**2026-08-25 — Mars, with Phobos and Deimos.** The Viking colour mosaic as a
-16-colour palette over MOLA relief that lifts the limb and lights the terrain,
-read back in enhanced red. Two procedural moons in tilted orbits, tidally
-locked, Stickney on Phobos — and rigid, so the swell leaves them alone.
-
-**2026-08-24 — the day most of it happened**, 37 commits:
-
-- *Shapes.* The animation lands in the morning with Earth, the Moon, a cube, a
-  torus and a sphere. The Sun arrives (procedural, after SDO: a boiling
-  photosphere, sunspots, prominences), then Saturn with real body and ring
-  textures and Earth's ETOPO1 sea floor. Jupiter, from Cassini's cylindrical
-  map, replaces the torus; the plain sphere goes too. Saturn is recoloured to
-  butterscotch. By evening the Sun is redone so nothing on it stands still —
-  it boils, churns and erupts about once a minute.
-- *Sky and light.* City lights on Earth's night side, particle trails, a
-  toggleable atmosphere reworked into a smooth haze. A starfield, first a hash
-  over the screen, then the real one: the Yale Bright Star Catalogue, turning
-  with the world.
-- *Scale.* Capacity goes 2M → 10M particles with buffers sized to the slider;
-  exposure is normalized against count and size so neither doubles as a
-  brightness control; the loading screen boots the world in slices; uncapped
-  mode syncs with the GPU; int8 normals are renormalized so iOS stops growing
-  NaN blobs. A slow planet switch says how far along it is.
-- *Controls.* Menu icons and first-class mobile controls, the shape shifted
-  below the menu on portrait phones; an advanced panel with hand size, count,
-  opacity and blur (the focus slider goes away); a credits panel; a debug
-  window and vsync toggle folded into the advanced panel.
-- *The site.* A proper HTML document for GitHub Pages, the README with its
-  data-sources table and a video at the top, the MIT license, and a note that
-  the site uses Analytics.
-
-**2026-08-23 — the repository.**
+- **2026-08-25 — Mars, with Phobos and Deimos.** The Viking colour mosaic over
+  MOLA relief, read back in enhanced red. Two procedural moons in tilted
+  orbits, tidally locked and rigid in the swell.
+- **2026-08-24 — The Sun comes alive.** Nothing on it is baked any more: it
+  boils, churns and erupts about once a minute, all in the shader.
+- **2026-08-24 — A real sky.** The Yale Bright Star Catalogue, every star to
+  magnitude 6, turning with the world.
+- **2026-08-24 — Jupiter, and a butterscotch Saturn.** Jupiter from Cassini's
+  cylindrical map replaces the torus; Saturn is recoloured off the
+  natural-colour mosaic.
+- **2026-08-24 — Ten million particles.** Capacity goes 2M → 10M with buffers
+  sized to the slider, exposure normalized against count and size, and a
+  loading screen that boots the world in slices. Menu icons, mobile controls,
+  an advanced panel and a credits panel.
+- **2026-08-24 — Saturn, and more of Earth.** Saturn with real body and ring
+  textures; ETOPO1 sea floor, city lights, particle trails and a toggleable
+  atmosphere on Earth.
+- **2026-08-24 — The Sun.** Procedural, after SDO imagery: a boiling
+  photosphere, sunspots, prominences.
+- **2026-08-24 — The animation lands.** Earth, the Moon, a cube, a torus and a
+  sphere; water, particles and fog; the cursor stirs the surface.
+- **2026-08-23 — The repository.**
 
 ## License
 
