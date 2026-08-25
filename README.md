@@ -55,10 +55,14 @@ the largest body — its mass, how much of it came from the impactor, its iron
 fraction and the length of its day from its spin — what is bound in orbit
 around it, what is escaping, and the second body once one has formed, with
 the same make-up: the numbers the literature judges a Moon-forming impact by.
-Under those, the books: the barycentre's drift, the angular momentum in
-units of today's Earth–Moon system and how much of it the run has kept, the
-mechanical energy, the heat the contacts have made, and whether the two add
-up to what they were at the start — plus how the contact cells are doing.
+A **moon** line says what Moon the disk in orbit would make, by Ida, Canup
+& Stewart's fit to disk-accretion runs (from the disk's mass and angular
+momentum: the months the sim cannot run, in one number). Under those, the
+books: the barycentre's drift, the angular momentum in units of today's
+Earth–Moon system and how much of it the run has kept, the mechanical
+energy, the heat the contacts have made, and whether the two add up to what
+they were at the start — plus how the contact cells are doing and how much
+of the loose material the pairwise pass is holding.
 *Advanced* has the mass ratio, the angle, the speed in units of escape
 velocity, each body's spin as a fraction of its breakup rate (shown as the
 day it makes; none, retrograde, or up to Ćuk & Stewart's 2.6-hour Earth),
@@ -152,7 +156,17 @@ acceleration at every occupied cell is the direct sum over the 20³ fine cells
 around it (3.75 R⊕: the whole planet and its near disk), taken at the cell's
 centre of mass so that cell on cell is equal and opposite, plus the 16³
 coarse cells' centres of mass beyond, and particles read it back trilinearly;
-off the mesh, everything on it acts as one mass. The approach is a two-body problem solved
+off the mesh, everything on it acts as one mass, and pulls back on it with
+the equal and opposite. A mesh cell is 0.19 R⊕ — five particle diameters at
+131k — so a moonlet a cell or two across is one the mesh can only smear, and
+the first version's moonlets came apart into puffs. So the loose material —
+everything beyond 1.3 radii of the planet's centre, up to 8k particles, the
+farthest first — gets its gravity among itself corrected pairwise,
+P³M-style: what Newton gives a pair less what the mesh already gave it, out
+to five cells. The mesh's own pair force is measured at load by putting two
+particles on the grid and repeating its arithmetic on the CPU, so the table
+stays right whatever the mesh does. Moonlets bind as they should; the
+planet, ten cells across, stays on the mesh. The approach is a two-body problem solved
 on the CPU with the planets carried rigid, so the expensive part starts at
 first touch. Symplectic Euler, a step set by the contact spring's period; the
 cells are rebuilt every other step (a particle moves under a fifth of a radius
@@ -180,6 +194,11 @@ so to tell the planet from its disk and to keep the books.
 
 Broad strokes, newest first; the commit history tells each one in full.
 
+- **2026-08-26 — The disk binds.** Moonlets came apart into puffs: a cell
+  of the gravity mesh is five particles wide and a moonlet is a cell or two.
+  The loose material now gets its gravity corrected pairwise, P³M-style, and
+  the disk collects into moonlets that stay; a moon line says what Moon the
+  disk would make.
 - **2026-08-26 — The books.** The readout keeps momentum, angular momentum
   and energy, and they caught the gravity mesh braking a spinning planet by
   lagging four steps behind it; the mesh now pulls as one impulse where it

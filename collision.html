@@ -255,6 +255,8 @@ var N_CHOICES = [16384, 32768, 65536, 131072, 262144];
 var N_LABELS = ['16k', '33k', '65k', '131k', '262k'];
 var SLOTS = 8;                              // body-particles a contact cell can hold
 var FL = 6.0, FH = 2 * FL / 64;             // gravity mesh: 64³ cells over ±6 R⊕
+var PP_CAP = 8192, PP_W = 128, PP_H = 64;   // the loose material the pairwise pass can take, as a 128×64 list
+var PP_CUT = 5 * FH;                        // how far the pairwise correction reaches: five cells
 var PRESETS = {
   theia:   { q: 0.10, angle: 45, vfac: 1.05, dist: 7.5, label: 'theia' },      // the canonical Moon-forming impact
   headon:  { q: 0.10, angle: 0,  vfac: 1.00, dist: 7.5, label: 'head-on' },
@@ -387,6 +389,10 @@ var SLOT_FS = [
 // 2. Mass onto the mesh: each particle is eight points, one per corner of its
 //    cell, cloud-in-cell weights, added up by blending. Mass is in particles;
 //    xyz carry mass-weighted position so a cell knows its centre of mass.
+//    A particle beyond the mesh adds instead, into the scratch texel on the
+//    row below the atlas, the pull it has on the mesh (it feels the mesh's
+//    monopole; this is the equal and opposite, per unit of mesh mass, from
+//    last time's monopole), so the mesh is not pushed around one-sidedly.
 var DEP_VS = [
   '#version 300 es',
   'precision highp float;',
@@ -394,9 +400,11 @@ var DEP_VS = [
   'precision highp sampler2D;',
   'uniform sampler2D uPos;',
   'uniform sampler2D uMat;',      // r — mass, in Earth-mantle particles
+  'uniform sampler2D uMono;',
   'uniform ivec2 uSize;',
   'uniform float uInvH;',
   'uniform float uL;',
+  'uniform float uEps2;',
   GLSL_GRID,
   'out vec4 vW;',
   'void main() {',
@@ -405,13 +413,22 @@ var DEP_VS = [
   '  vec3 p = texelFetch(uPos, tc, 0).xyz;',
   '  float mr = texelFetch(uMat, tc, 0).r;',
   '  vec3 g = (p + uL) * uInvH - 0.5;',
+  '  gl_PointSize = 1.0;',
+  '  if (any(lessThan(g, vec3(0.0))) || any(greaterThan(g, vec3(63.0)))) {',
+  '    if (k != 0) { gl_Position = vec4(4.0, 4.0, 4.0, 1.0); vW = vec4(0.0); return; }',
+  '    vec4 mono = texelFetch(uMono, ivec2(0), 0);',
+  '    vec3 r = mono.xyz / max(mono.w, 1e-6) - p;',
+  '    float inv = inversesqrt(dot(r, r) + uEps2);',
+  '    gl_Position = vec4(0.5 / 512.0 * 2.0 - 1.0, 512.5 / 513.0 * 2.0 - 1.0, 0.0, 1.0);',
+  '    vW = vec4(r * (mr * inv * inv * inv), mr);',
+  '    return;',
+  '  }',
   '  vec3 f = floor(g), t = g - f;',
   '  ivec3 o = ivec3(k & 1, (k >> 1) & 1, k >> 2);',
   '  ivec3 c = ivec3(f) + o;',
   '  vec3 w3 = mix(1.0 - t, t, vec3(o));',
-  '  gl_PointSize = 1.0;',
-  '  if (any(lessThan(c, ivec3(0))) || any(greaterThan(c, ivec3(63)))) { gl_Position = vec4(4.0, 4.0, 4.0, 1.0); vW = vec4(0.0); return; }',
-  '  gl_Position = vec4((vec2(fineAt(c)) + 0.5) / 512.0 * 2.0 - 1.0, 0.0, 1.0);',
+  '  if (any(greaterThan(c, ivec3(63)))) { gl_Position = vec4(4.0, 4.0, 4.0, 1.0); vW = vec4(0.0); return; }',
+  '  gl_Position = vec4((vec2(fineAt(c)) + 0.5) / vec2(512.0, 513.0) * 2.0 - 1.0, 0.0, 1.0);',
   '  vW = vec4(p, 1.0) * (w3.x * w3.y * w3.z * mr);',
   '}'
 ].join('\n');
@@ -473,6 +490,7 @@ var CELL_FS = [
   'out vec4 o;',
   'void main() {',
   '  ivec2 me = ivec2(gl_FragCoord.xy);',
+  '  if (me.y >= 512) { o = texelFetch(uFine, me, 0); return; }',   // the scratch row: the pull of what is beyond the mesh, carried through
   '  ivec3 c = ivec3(me.x & 63, me.y & 63, (me.y >> 6) * 8 + (me.x >> 6));',
   '  vec4 mc = texelFetch(uFine, me, 0);',
   '  if (mc.w <= 0.0) { o = vec4(0.0); return; }',
@@ -545,6 +563,8 @@ var SIM_FS = [
   'uniform vec3 uSpin0;',
   'uniform vec3 uSpin1;',
   'uniform sampler2D uQ;',        // r — the energy this particle has dissipated so far
+  'uniform sampler2D uPPSlot;',   // r — this particle's seat on the loose list, or -1
+  'uniform sampler2D uPPForce;',  // the pairwise correction, by seat
   GLSL_GRID,
   GLSL_HGRID,
   GLSL_SLOTS,
@@ -606,12 +626,15 @@ var SIM_FS = [
   '      vec3 w3 = mix(1.0 - t, t, vec3(o));',
   '      grav += texelFetch(uForce, fineAt(min(c0 + o, ivec3(63))), 0).xyz * (w3.x * w3.y * w3.z);',
   '    }',
+  '    grav -= texelFetch(uForce, ivec2(0, 512), 0).xyz * uGm;',   // what is beyond the mesh pulls back
   '  } else {',
   '    vec4 mono = texelFetch(uMono, ivec2(0), 0);',
   '    vec3 r = mono.xyz / max(mono.w, 1e-6) - p;',
   '    float inv = inversesqrt(dot(r, r) + uEps2);',
   '    grav = r * (uGm * mono.w * inv * inv * inv);',
   '  }',
+  '  float seat = texelFetch(uPPSlot, me, 0).r;',
+  '  if (seat >= 0.0) grav += texelFetch(uPPForce, ivec2(int(seat) & 127, int(seat) >> 7), 0).xyz;',
   '  v += push * (uInvM / ri) * uDt + grav * uGDt;',
   '  float T = V.w * uCool + heat * uHeatK * uDt / ri;',
   '  vec3 vr = cross(body < 3.5 ? uSpin0 : uSpin1, p - (body < 3.5 ? uCen0 : uCen1));',   // the body's spin at p
@@ -683,6 +706,8 @@ var DIAG_FS = [
   'uniform float uL;',
   'uniform float uEps2;',
   'uniform float uGm;',
+  'uniform sampler2D uPPSlot;',
+  'uniform sampler2D uPPForce;',
   GLSL_GRID,
   GLSL_HGRID,
   GLSL_SLOTS,
@@ -715,7 +740,79 @@ var DIAG_FS = [
   '    phi = -uGm * mono.w * inversesqrt(dot(r, r) + uEps2);',
   '    off = 2.0;',
   '  }',
+  '  float seat = texelFetch(uPPSlot, me, 0).r;',
+  '  if (seat >= 0.0) phi += texelFetch(uPPForce, ivec2(int(seat) & 127, int(seat) >> 7), 0).w;',
   '  o = vec4(phi, seated + off, taken, texelFetch(uQ, me, 0).r);',
+  '}'
+].join('\n');
+
+// 7. The loose material — everything beyond 1.3 radii of the planet's centre:
+//    the tidal arm from its root out, the disk, the escapers — gets the
+//    gravity among itself corrected pairwise, P³M-style: what Newton gives a
+//    pair less what the mesh already gave it, out to five cells. A moonlet a
+//    cell or two across, which the mesh can only smear, then binds as it
+//    should; the planet, ten cells across, stays on the mesh. First the list's
+//    positions are gathered into a compact texture…
+var PPGATHER_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp int;',
+  'precision highp sampler2D;',
+  'uniform sampler2D uPos;',
+  'uniform sampler2D uMat;',
+  'uniform sampler2D uIndex;',      // r — the particle in this seat, or -1
+  'uniform ivec2 uSize;',
+  'out vec4 o;',                    // xyz — position, w — mass, or -1 for an empty seat
+  'void main() {',
+  '  ivec2 me = ivec2(gl_FragCoord.xy);',
+  '  float fi = texelFetch(uIndex, me, 0).r;',
+  '  if (fi < 0.0) { o = vec4(0.0, 0.0, 0.0, -1.0); return; }',
+  '  int i = int(fi);',
+  '  ivec2 t = ivec2(i % uSize.x, i / uSize.x);',
+  '  o = vec4(texelFetch(uPos, t, 0).xyz, texelFetch(uMat, t, 0).r);',
+  '}'
+].join('\n');
+// …then every seat is summed against the whole list. The mesh's own pair
+// force and potential come as tables by distance (see meshPairTable), Newton's
+// is softened at the particle radius, and the difference is tapered out at
+// the cut-off.
+var PPFORCE_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp int;',
+  'precision highp sampler2D;',
+  'uniform sampler2D uList;',
+  'uniform int uCount;',
+  'uniform float uGm;',
+  'uniform float uCut;',
+  'uniform float uA2;',             // particle radius²
+  'uniform float uTab[64];',        // the mesh's pair force × r², by r/uCut
+  'uniform float uPot[64];',        // its pair potential × r
+  'out vec4 o;',                    // xyz — acceleration to add, w — potential to add
+  'void main() {',
+  '  ivec2 me = ivec2(gl_FragCoord.xy);',
+  '  int myIdx = me.y * 128 + me.x;',
+  '  vec4 P = texelFetch(uList, me, 0);',
+  '  if (myIdx >= uCount || P.w < 0.0) { o = vec4(0.0); return; }',
+  '  vec3 acc = vec3(0.0);',
+  '  float pot = 0.0, cut2 = uCut * uCut, a = sqrt(uA2);',
+  '  for (int j = 0; j < uCount; j++) {',
+  '    if (j == myIdx) continue;',
+  '    vec4 Q = texelFetch(uList, ivec2(j & 127, j >> 7), 0);',
+  '    vec3 d = Q.xyz - P.xyz;',
+  '    float r2 = dot(d, d);',
+  '    if (r2 >= cut2) continue;',
+  '    float r = sqrt(r2);',
+  '    float x = clamp(r / uCut * 64.0 - 0.5, 0.0, 63.0);',
+  '    int k = int(x), k1 = min(k + 1, 63);',
+  '    float t = x - float(k);',
+  '    float invN = inversesqrt(r2 + uA2);',
+  '    float taper = smoothstep(uCut, 0.8 * uCut, r);',
+  '    float fn = invN * invN * invN * r - mix(uTab[k], uTab[k1], t) / max(r2, uA2);',
+  '    acc += d / max(r, 1e-6) * (Q.w * fn * taper);',
+  '    pot += Q.w * (-invN - mix(uPot[k], uPot[k1], t) / max(r, a)) * taper;',
+  '  }',
+  '  o = vec4(acc * uGm, pot * uGm);',
   '}'
 ].join('\n');
 
@@ -1040,7 +1137,7 @@ function freeTarget(t) {
   gl.deleteTexture(t.pos); gl.deleteTexture(t.vel); gl.deleteTexture(t.aux); gl.deleteTexture(t.q); gl.deleteFramebuffer(t.fbo);
 }
 
-var simProg, slotProg, depProg, coarseProg, monoProg, cellProg, rigidProg, diagProg;
+var simProg, slotProg, depProg, coarseProg, monoProg, cellProg, rigidProg, diagProg, ppGatherProg, ppForceProg;
 var dustProg, starProg, gProg, blurProg, shadeProg, toneProg, vao;
 try {
   simProg = program(QUAD_VS, SIM_FS);
@@ -1051,6 +1148,8 @@ try {
   cellProg = program(QUAD_VS, CELL_FS);
   rigidProg = program(QUAD_VS, RIGID_FS);
   diagProg = program(QUAD_VS, DIAG_FS);
+  ppGatherProg = program(QUAD_VS, PPGATHER_FS);
+  ppForceProg = program(QUAD_VS, PPFORCE_FS);
   dustProg = program(DUST_VS, DUST_FS);
   starProg = program(STAR_VS, STAR_FS);
   gProg = program(G_VS, G_FS);
@@ -1111,12 +1210,21 @@ function fboFor(tex, depthRb) {
 }
 var dummy = floatTex(1, 1, new Float32Array([-1, 0, 0, 0]));   // "no particle", for slot samplers not yet filled
 var pm = {
-  fine: floatTex(512, 512, null, gl.RGBA16F, gl.HALF_FLOAT),   // 64³: Σ w·xyz, Σ w — blendable
+  fine: floatTex(512, 513, null, gl.RGBA16F, gl.HALF_FLOAT),   // 64³: Σ w·xyz, Σ w — blendable; a scratch row below
   coarse: floatTex(64, 64, null),                              // 16³
   mono: floatTex(1, 1, null),
-  force: floatTex(512, 512, null)                              // acceleration at every fine cell
+  force: floatTex(512, 513, null)                              // acceleration and potential at every fine cell; the scratch row copied
 };
 pm.fineFbo = fboFor(pm.fine); pm.coarseFbo = fboFor(pm.coarse); pm.monoFbo = fboFor(pm.mono); pm.forceFbo = fboFor(pm.force);
+
+// the loose material's pairwise pass: a seat per particle (-1 for none), the
+// particle in each seat, the seats' positions gathered, the correction found
+var pp = {
+  index: floatTex(PP_W, PP_H, null, gl.R32F, gl.FLOAT, gl.RED),
+  list: floatTex(PP_W, PP_H, null), force: floatTex(PP_W, PP_H, null),
+  slot: null, slotArr: null, indexArr: new Float32Array(PP_CAP), count: 0, loose: 0
+};
+pp.listFbo = fboFor(pp.list); pp.forceFbo = fboFor(pp.force);
 
 // the contact grid: G³ hashed cells × SLOTS textures of particle indices
 var grid = null;
@@ -1200,6 +1308,69 @@ function randRot(rng) {
           2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
           2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)];
 }
+// The mesh's own force between two particles by their distance, for the
+// pairwise pass to subtract. The two are put on the grid (a random offset, a
+// random direction) and the mesh's arithmetic is repeated here — cloud-in-cell
+// deposit, force and potential at each node's centre of mass with the near
+// softening, own node left out, cloud-in-cell gather — less what the first
+// particle feels alone, its self-force. Averaged over 80 placings a bin, 64
+// bins to the cut-off; returned as force × r² and potential × r, which go to
+// 1 and −1 where the mesh is Newton's.
+function meshPairTable(bins, cut) {
+  var rng = mulberry(777), eps2 = 0.5 * FH * FH, per = 80;
+  var f = new Float32Array(bins), pt = new Float32Array(bins);
+  function corners(p) {
+    var g = [(p[0] + FL) / FH - 0.5, (p[1] + FL) / FH - 0.5, (p[2] + FL) / FH - 0.5];
+    var fl = [Math.floor(g[0]), Math.floor(g[1]), Math.floor(g[2])], t = [g[0] - fl[0], g[1] - fl[1], g[2] - fl[2]], out = [];
+    for (var k = 0; k < 8; k++) {
+      var ox = k & 1, oy = (k >> 1) & 1, oz = k >> 2;
+      out.push([(fl[0] + ox) + ',' + (fl[1] + oy) + ',' + (fl[2] + oz), (ox ? t[0] : 1 - t[0]) * (oy ? t[1] : 1 - t[1]) * (oz ? t[2] : 1 - t[2])]);
+    }
+    return out;
+  }
+  function field(parts, at) {
+    var nodes = new Map(), i, k;
+    for (i = 0; i < parts.length; i++) {
+      var p = parts[i], cs = corners(p);
+      for (k = 0; k < 8; k++) {
+        var n = nodes.get(cs[k][0]), w = cs[k][1];
+        if (!n) { n = { m: 0, x: 0, y: 0, z: 0, fx: 0, fy: 0, fz: 0, pot: 0 }; nodes.set(cs[k][0], n); }
+        n.m += w; n.x += w * p[0]; n.y += w * p[1]; n.z += w * p[2];
+      }
+    }
+    var list = Array.from(nodes.values());
+    list.forEach(function (n) { n.x /= n.m; n.y /= n.m; n.z /= n.m; });
+    list.forEach(function (c) {
+      list.forEach(function (o) {
+        if (o === c) return;
+        var rx = o.x - c.x, ry = o.y - c.y, rz = o.z - c.z, inv = 1 / Math.sqrt(rx * rx + ry * ry + rz * rz + eps2), inv3 = inv * inv * inv;
+        c.fx += rx * o.m * inv3; c.fy += ry * o.m * inv3; c.fz += rz * o.m * inv3; c.pot -= o.m * inv;
+      });
+    });
+    var out = [0, 0, 0, 0], cs = corners(at);
+    for (k = 0; k < 8; k++) {
+      var n = nodes.get(cs[k][0]), w = cs[k][1];
+      if (!n) continue;
+      out[0] += w * n.fx; out[1] += w * n.fy; out[2] += w * n.fz; out[3] += w * n.pot;
+    }
+    return out;
+  }
+  for (var b = 0; b < bins; b++) {
+    var r = (b + 0.5) / bins * cut, sf = 0, sp = 0;
+    for (var s = 0; s < per; s++) {
+      var p = [(rng() - 0.5) * FH, (rng() - 0.5) * FH, (rng() - 0.5) * FH];
+      var z = 2 * rng() - 1, ph = rng() * 6.2831853, rr = Math.sqrt(1 - z * z), u = [rr * Math.cos(ph), rr * Math.sin(ph), z];
+      var q = [p[0] + u[0] * r, p[1] + u[1] * r, p[2] + u[2] * r];
+      var both = field([[p[0], p[1], p[2], 1], [q[0], q[1], q[2], 1]], p), alone = field([[p[0], p[1], p[2], 1]], p);
+      sf += (both[0] - alone[0]) * u[0] + (both[1] - alone[1]) * u[1] + (both[2] - alone[2]) * u[2];
+      sp += both[3] - alone[3];
+    }
+    f[b] = sf / per * r * r; pt[b] = sp / per * r;
+  }
+  return { f: f, p: pt };
+}
+var PP_TAB = meshPairTable(64, PP_CUT);
+
 function perspective(fov, aspect, near, far) {
   var f = 1 / Math.tan(fov / 2), nf = 1 / (near - far);
   return new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0]);
@@ -1363,6 +1534,10 @@ function build() {
     damp: Math.exp(-dt * 12), cool: Math.exp(-dt / 12), heatK: 0.7 / mref, gen: ++gen
   };
   sim.diagFbo = fboFor(sim.diag);
+  if (pp.slot) gl.deleteTexture(pp.slot);
+  pp.slotArr = new Float32Array(N).fill(-1);
+  pp.slot = floatTex(W, H, pp.slotArr, gl.R32F, gl.FLOAT, gl.RED);
+  pp.count = 0; pp.loose = 0;
   setStaticUniforms();
   report = null; stepAcc = 0; paused = false;
   $('btn-pause').textContent = 'pause';
@@ -1411,10 +1586,11 @@ function setStaticUniforms() {
   gl.uniform1f(u.uInvN, 1 / sim.N);
 
   u = depProg.u; gl.useProgram(depProg.p);
-  gl.uniform1i(u.uPos, 0); gl.uniform1i(u.uMat, 1);
+  gl.uniform1i(u.uPos, 0); gl.uniform1i(u.uMat, 1); gl.uniform1i(u.uMono, 2);
   gl.uniform2i(u.uSize, sim.W, sim.H);
   gl.uniform1f(u.uInvH, 1 / FH);
   gl.uniform1f(u.uL, FL);
+  gl.uniform1f(u.uEps2, FH * FH);
 
   gl.useProgram(coarseProg.p); gl.uniform1i(coarseProg.u.uFine, 0);
   gl.useProgram(monoProg.p); gl.uniform1i(monoProg.u.uCoarse, 0);
@@ -1428,6 +1604,7 @@ function setStaticUniforms() {
 
   u = simProg.u; gl.useProgram(simProg.p);
   gl.uniform1i(u.uPos, 0); gl.uniform1i(u.uVel, 1); gl.uniform1i(u.uForce, 2); gl.uniform1i(u.uMono, 3); gl.uniform1i(u.uMat, 12); gl.uniform1i(u.uQ, 13);
+  gl.uniform1i(u.uPPSlot, 14); gl.uniform1i(u.uPPForce, 15);
   for (s = 0; s < SLOTS; s++) gl.uniform1i(u['uS' + s], 4 + s);
   gl.uniform2i(u.uSize, sim.W, sim.H);
   gl.uniform1f(u.uInvCell, 1 / sim.cell);
@@ -1455,6 +1632,7 @@ function setStaticUniforms() {
 
   u = diagProg.u; gl.useProgram(diagProg.p);
   gl.uniform1i(u.uPos, 0); gl.uniform1i(u.uQ, 1); gl.uniform1i(u.uForce, 2); gl.uniform1i(u.uMono, 3);
+  gl.uniform1i(u.uPPSlot, 12); gl.uniform1i(u.uPPForce, 13);
   for (s = 0; s < SLOTS; s++) gl.uniform1i(u['uS' + s], 4 + s);
   gl.uniform2i(u.uSize, sim.W, sim.H);
   gl.uniform1f(u.uInvCell, 1 / sim.cell);
@@ -1464,6 +1642,17 @@ function setStaticUniforms() {
   gl.uniform1f(u.uL, FL);
   gl.uniform1f(u.uEps2, FH * FH);
   gl.uniform1f(u.uGm, sim.m);
+
+  u = ppGatherProg.u; gl.useProgram(ppGatherProg.p);
+  gl.uniform1i(u.uPos, 0); gl.uniform1i(u.uMat, 1); gl.uniform1i(u.uIndex, 2);
+  gl.uniform2i(u.uSize, sim.W, sim.H);
+  u = ppForceProg.u; gl.useProgram(ppForceProg.p);
+  gl.uniform1i(u.uList, 0);
+  gl.uniform1f(u.uGm, sim.m);
+  gl.uniform1f(u.uCut, PP_CUT);
+  gl.uniform1f(u.uA2, sim.a * sim.a);
+  gl.uniform1fv(u['uTab[0]'], PP_TAB.f);
+  gl.uniform1fv(u['uPot[0]'], PP_TAB.p);
 }
 
 // 1. contact cells, one slot per pass
@@ -1488,12 +1677,13 @@ function passSlots() {
 function passDeposit() {
   gl.useProgram(depProg.p);
   gl.bindFramebuffer(gl.FRAMEBUFFER, pm.fineFbo);
-  gl.viewport(0, 0, 512, 512);
+  gl.viewport(0, 0, 512, 513);
   gl.clearColor(0, 0, 0, 0);
   gl.clear(gl.COLOR_BUFFER_BIT);
   gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sim.src.pos);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, sim.mat);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, pm.mono);
   gl.drawArrays(gl.POINTS, 0, sim.N * 8);
   gl.disable(gl.BLEND);
 }
@@ -1516,7 +1706,7 @@ function passCoarse() {
 function passCell() {
   gl.useProgram(cellProg.p);
   gl.bindFramebuffer(gl.FRAMEBUFFER, pm.forceFbo);
-  gl.viewport(0, 0, 512, 512);
+  gl.viewport(0, 0, 512, 513);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, pm.fine);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, pm.coarse);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -1535,6 +1725,8 @@ function passSim(settle, kick, gdt) {
   for (s = 0; s < SLOTS; s++) { gl.activeTexture(gl.TEXTURE4 + s); gl.bindTexture(gl.TEXTURE_2D, g.slot[s]); }
   gl.activeTexture(gl.TEXTURE12); gl.bindTexture(gl.TEXTURE_2D, sim.mat);
   gl.activeTexture(gl.TEXTURE13); gl.bindTexture(gl.TEXTURE_2D, sim.src.q);
+  gl.activeTexture(gl.TEXTURE14); gl.bindTexture(gl.TEXTURE_2D, pp.slot);
+  gl.activeTexture(gl.TEXTURE15); gl.bindTexture(gl.TEXTURE_2D, pp.force);
   gl.uniform1f(u.uSettle, settle ? 1 : 0);
   gl.uniform1f(u.uKick, kick ? 1 : 0);
   gl.uniform1f(u.uGDt, gdt);
@@ -1551,7 +1743,7 @@ function passSim(settle, kick, gdt) {
 function passDiag() {
   var g = grid, s;
   passSlots();
-  passDeposit(); passCoarse(); passCell();
+  passDeposit(); passCoarse(); passCell(); passPP();
   gl.useProgram(diagProg.p);
   gl.bindFramebuffer(gl.FRAMEBUFFER, sim.diagFbo);
   gl.viewport(0, 0, sim.W, sim.H);
@@ -1560,6 +1752,26 @@ function passDiag() {
   gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, pm.force);
   gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, pm.mono);
   for (s = 0; s < SLOTS; s++) { gl.activeTexture(gl.TEXTURE4 + s); gl.bindTexture(gl.TEXTURE_2D, g.slot[s]); }
+  gl.activeTexture(gl.TEXTURE12); gl.bindTexture(gl.TEXTURE_2D, pp.slot);
+  gl.activeTexture(gl.TEXTURE13); gl.bindTexture(gl.TEXTURE_2D, pp.force);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+// 7. the loose material, pairwise: the list's positions gathered, then every
+//    seat against the whole list
+function passPP() {
+  if (!pp.count) return;
+  gl.useProgram(ppGatherProg.p);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pp.listFbo);
+  gl.viewport(0, 0, PP_W, PP_H);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sim.src.pos);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, sim.mat);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, pp.index);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.useProgram(ppForceProg.p);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pp.forceFbo);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, pp.list);
+  gl.uniform1i(ppForceProg.u.uCount, pp.count);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
@@ -1576,7 +1788,7 @@ function step(settle, kick) {
   var n = sim.stepNo++;
   if (n % 2 === 0) passSlots();
   var mesh = n % MESH_EVERY === 0;
-  if (mesh) { passDeposit(); passCoarse(); passCell(); }
+  if (mesh) { passDeposit(); passCoarse(); passCell(); passPP(); }
   passSim(settle, kick, mesh ? MESH_EVERY * sim.dt : 0);
 }
 
@@ -1648,7 +1860,7 @@ function rigidStep(dtF) {
 // the read-outs in, the report out. Counting sort into hashed cells, then
 // union-find. Layer and body ride in P.w: layer + 4·body, layer 0 being core.
 // The books come along: mass, momentum, angular momentum, the energies.
-function fof(N, mref, a, P, V, R, D, spring, touch) {
+function fof(N, mref, a, P, V, R, D, spring, touch, cap) {
   var L = 2.4 * a, L2 = L * L, inv = 1 / L, touch2 = touch * touch, elastic = 0;
   var T = 1 << 20, TM = T - 1;
   var cx = new Int32Array(N), cy = new Int32Array(N), cz = new Int32Array(N), key = new Int32Array(N);
@@ -1723,10 +1935,23 @@ function fof(N, mref, a, P, V, R, D, spring, touch) {
     var dv2 = (vx - A.vel[0]) * (vx - A.vel[0]) + (vy - A.vel[1]) * (vy - A.vel[1]) + (vz - A.vel[2]) * (vz - A.vel[2]);
     return 0.5 * dv2 - A.mass / Math.max(r, A.R);
   }
-  var orbit = 0, esc = 0;
+  // what is bound in orbit is the disk; its mass and angular momentum about
+  // the planet say what Moon it makes, by Ida, Canup & Stewart's fit to
+  // disk-accretion runs: M/M_D ≈ 1.9 j − 1.1 − 1.9 M_esc/M_D, with
+  // j = J_D / (M_D √(G M a_R)), a_R the Roche limit for lunar density,
+  // 2.9 R⊕, and a twentieth of the disk lost on the way.
+  var orbit = 0, esc = 0, Dx = 0, Dy = 0, Dz = 0;
   for (i = 0; i < N; i++) if (find(i) !== g1) {
-    if (energy(P[i * 4], P[i * 4 + 1], P[i * 4 + 2], V[i * 4], V[i * 4 + 1], V[i * 4 + 2]) < 0) orbit += mref * R[i]; else esc += mref * R[i];
+    m = mref * R[i];
+    if (energy(P[i * 4], P[i * 4 + 1], P[i * 4 + 2], V[i * 4], V[i * 4 + 1], V[i * 4 + 2]) < 0) {
+      orbit += m;
+      dx0 = P[i * 4] - A.com[0]; dy0 = P[i * 4 + 1] - A.com[1]; dz0 = P[i * 4 + 2] - A.com[2];
+      var wx = V[i * 4] - A.vel[0], wy = V[i * 4 + 1] - A.vel[1], wz = V[i * 4 + 2] - A.vel[2];
+      Dx += m * (dy0 * wz - dz0 * wy); Dy += m * (dz0 * wx - dx0 * wz); Dz += m * (dx0 * wy - dy0 * wx);
+    } else esc += m;
   }
+  var jD = orbit > 0 ? Math.sqrt(Dx * Dx + Dy * Dy + Dz * Dz) / (orbit * Math.sqrt(A.mass * 2.9)) : 0;
+  var moon = Math.max(0, orbit * (1.9 * jD - 1.1 - 1.9 * 0.05));
   var second = null;
   if (B && B.n >= Math.max(8, N / 1000)) {
     var dAB = Math.sqrt((B.com[0] - A.com[0]) * (B.com[0] - A.com[0]) + (B.com[1] - A.com[1]) * (B.com[1] - A.com[1]) + (B.com[2] - A.com[2]) * (B.com[2] - A.com[2]));
@@ -1751,16 +1976,37 @@ function fof(N, mref, a, P, V, R, D, spring, touch) {
     if (flag - (off ? 2 : 0) < 0.5) unseated++;
     if (D[i * 4 + 2] >= 7.5) full++;
   }
+  // the loose material, for the pairwise pass: everything beyond 1.3 radii of
+  // the largest body's centre — and of the second's, if that is a body the
+  // mesh can hold on its own (0.05 M⊕, two cells across). More than the pass
+  // can take, and it takes the farthest from the planet: what will stay out,
+  // not what is falling back in. The readout says how many were left.
+  function far2(body, i) {
+    var ex = P[i * 4] - body.com[0], ey = P[i * 4 + 1] - body.com[1], ez = P[i * 4 + 2] - body.com[2];
+    return ex * ex + ey * ey + ez * ez;
+  }
+  function loose(i) { return far2(A, i) > 1.69 * A.R * A.R && !(bigB && far2(B, i) <= 1.69 * B.R * B.R); }
+  var bigB = B && B.mass > 0.05, nLoose = 0, wr = 0, least = 0;
+  for (i = 0; i < N; i++) if (loose(i)) nLoose++;
+  if (nLoose > cap) {
+    var ds = new Float64Array(nLoose), q = 0;
+    for (i = 0; i < N; i++) if (loose(i)) ds[q++] = far2(A, i);
+    ds.sort();
+    least = ds[nLoose - cap];
+  }
+  var list = new Float32Array(Math.min(nLoose, cap));
+  for (i = 0; i < N && wr < list.length; i++) if (loose(i) && far2(A, i) >= least) list[wr++] = i;
   return { largest: A.mass, largestImp: A.imp, largestIron: A.iron, day: day, orbit: orbit, escape: esc, second: second, com: A.com,
            M: Mt, drift: Math.sqrt(px * px + py * py + pz * pz) / Mt, L: Math.sqrt(Jx * Jx + Jy * Jy + Jz * Jz),
-           KE: ke, PE: pe, EL: elastic, Q: Q, unseated: unseated / N, full: full / N };
+           KE: ke, PE: pe, EL: elastic, Q: Q, unseated: unseated / N, full: full / N,
+           pp: { list: list, loose: nLoose }, jD: jD, moon: moon };
 }
 
 // the analysis runs in a worker when it can (a quarter million bodies take
 // tens of milliseconds); the buffers go back and forth without copying
-var worker = null, analyzing = false, diagBuf = null;
+var worker = null, analyzing = false, diagBuf = null, analyzedAt = 0;
 try {
-  var src = fof.toString() + '\nself.onmessage = function (e) { var d = e.data; var r = fof(d.N, d.m, d.a, d.P, d.V, d.R, d.D, d.k, d.touch); self.postMessage({ gen: d.gen, r: r, P: d.P, V: d.V, D: d.D }, [d.P.buffer, d.V.buffer, d.D.buffer]); };';
+  var src = fof.toString() + '\nself.onmessage = function (e) { var d = e.data; var r = fof(d.N, d.m, d.a, d.P, d.V, d.R, d.D, d.k, d.touch, d.cap); self.postMessage({ gen: d.gen, r: r, P: d.P, V: d.V, D: d.D }, [d.P.buffer, d.V.buffer, d.D.buffer, r.pp.list.buffer]); };';
   worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
   worker.onmessage = function (e) {
     analyzing = false;
@@ -1772,10 +2018,24 @@ try {
 function applyReport(r) {
   report = r; sim.com1 = r.com;
   if (!sim.ref) sim.ref = { E: r.KE + r.PE + r.EL, EQ: r.KE + r.PE + r.EL + r.Q, L: r.L };   // the books at the first look, settled and on approach
+  setPP(r.pp);
+}
+// the loose list onto the GPU — a seat per particle, the particle per seat —
+// and the correction for it right away, so no seat waits on the next mesh step
+function setPP(p) {
+  var arr = pp.slotArr, list = p.list, n = list.length, k;
+  arr.fill(-1);
+  for (k = 0; k < n; k++) arr[list[k]] = k;
+  pp.indexArr.fill(-1); pp.indexArr.set(list);
+  gl.bindTexture(gl.TEXTURE_2D, pp.slot); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, sim.W, sim.H, gl.RED, gl.FLOAT, arr);
+  gl.bindTexture(gl.TEXTURE_2D, pp.index); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, PP_W, PP_H, gl.RED, gl.FLOAT, pp.indexArr);
+  pp.count = n; pp.loose = p.loose;
+  if (n) passPP();
 }
 function analyze(sync) {
   if (analyzing && !sync) return;
   if (sync) sim.gen = ++gen;   // whatever the worker is still computing is for the state before this call: drop it
+  analyzedAt = sim.stepNo;
   var N = sim.N;
   var P = (!sync && posBuf && posBuf.length === N * 4) ? posBuf : new Float32Array(N * 4);
   var V = (!sync && velBuf && velBuf.length === N * 4) ? velBuf : new Float32Array(N * 4);
@@ -1790,9 +2050,9 @@ function analyze(sync) {
     analyzing = true;
     posBuf = null; velBuf = null; diagBuf = null;
     var R = sim.matR.slice();
-    worker.postMessage({ gen: sim.gen, N: N, m: sim.m, a: sim.a, P: P, V: V, R: R, D: D, k: sim.k, touch: 2 * sim.a }, [P.buffer, V.buffer, R.buffer, D.buffer]);
+    worker.postMessage({ gen: sim.gen, N: N, m: sim.m, a: sim.a, P: P, V: V, R: R, D: D, k: sim.k, touch: 2 * sim.a, cap: PP_CAP }, [P.buffer, V.buffer, R.buffer, D.buffer]);
   } else {
-    applyReport(fof(N, sim.m, sim.a, P, V, sim.matR, D, sim.k, 2 * sim.a));
+    applyReport(fof(N, sim.m, sim.a, P, V, sim.matR, D, sim.k, 2 * sim.a, PP_CAP));
   }
 }
 
@@ -2004,6 +2264,7 @@ function hud() {
     var pct = function (x) { return Math.round(x * 100) + '%'; };
     var lines = ['<b>largest</b>  ' + fmtMass(report.largest) + ' <i>' + pct(report.largestImp) + ' impactor · ' + pct(report.largestIron) + ' iron' + (report.day < 200 ? ' · day ' + report.day.toFixed(1) + ' h' : '') + '</i>'];
     lines.push('<b>in orbit</b> ' + fmtMass(report.orbit));
+    if (report.orbit > 0.0005) lines.push('<b>moon</b> ≈ ' + (report.moon / 0.0123).toFixed(2) + ' M☾ <i>· from that disk, j ' + report.jD.toFixed(2) + ' · Ida–Canup–Stewart</i>');
     lines.push('<b>escaping</b> ' + fmtMass(report.escape));
     if (report.second) lines.push('<b>2nd body</b> ' + fmtMass(report.second.mass) + ' <i>· ' + report.second.dist.toFixed(1) + ' R⊕ · ' + (report.second.bound ? 'bound' : 'unbound') + ' · ' + pct(report.second.imp) + ' impactor · ' + pct(report.second.iron) + ' iron</i>');
     // the books, against the first look: the barycentre's drift, the angular
@@ -2013,7 +2274,7 @@ function hud() {
     var sgn = function (x, d) { var s = Math.abs(x).toFixed(d); return (parseFloat(s) === 0 ? '' : x < 0 ? '\u2212' : '+') + s; };
     lines.push('<b>momentum</b> drift ' + (report.drift * V_UNIT * 1000).toFixed(1) + ' m/s <i>· L ' + (report.L / L_EM).toFixed(2) + ' L<sub>EM</sub>' + (ref ? ' ' + sgn((report.L - ref.L) / ref.L * 100, 2) + ' %' : '') + '</i>');
     lines.push('<b>energy</b> ' + sgn(E, 3) + ' <i>· heat ' + report.Q.toFixed(3) + (ref ? ' · balance ' + sgn((E + report.Q - ref.EQ) / Math.abs(ref.E) * 100, 2) + ' %' : '') + '</i>');
-    lines.push('<b>cells</b> ' + (report.unseated * 100).toFixed(2) + ' % unseated <i>· ' + (report.full * 100).toFixed(1) + ' % in full cells</i>');
+    lines.push('<b>cells</b> ' + (report.unseated * 100).toFixed(2) + ' % unseated <i>· ' + (report.full * 100).toFixed(1) + ' % in full cells · pairs ' + fmtCount(report.pp.list.length) + (report.pp.loose > report.pp.list.length ? ' of ' + fmtCount(report.pp.loose) : '') + '</i>');
     rep.innerHTML = lines.join('\n');
     rep.hidden = false;
   }
@@ -2036,7 +2297,7 @@ function frame() {
     }
   }
   render();
-  if (sim && sim.phase !== 'settle' && frameNo % 45 === 0) analyze();
+  if (sim && sim.phase !== 'settle' && (frameNo % 45 === 0 || sim.stepNo - analyzedAt >= 360)) analyze();
   frameNo++;
   fpsFrames++;
   var now = performance.now();
@@ -2137,7 +2398,11 @@ window.__impact = {
       M += w; cells++;
     }
     var f = Math.hypot(fx, fy, fz), t = Math.hypot(tx, ty, tz);
-    return { cells: cells, mass: M, force: f, forceFrac: f / af, accelMs2: f / M * 7910 / 805, torque: t, torqueFrac: t / at, torqueLEMperUnit: t / L_EM };
+    var sc = new Float32Array(4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, pm.forceFbo); gl.readPixels(0, 512, 1, 1, gl.RGBA, gl.FLOAT, sc);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { cells: cells, mass: M, force: f, forceFrac: f / af, accelMs2: f / M * 7910 / 805, torque: t, torqueFrac: t / at, torqueLEMperUnit: t / L_EM,
+             beyond: { mass: sc[3] * sim.m, reactMs2: Math.hypot(sc[0], sc[1], sc[2]) * sim.m * 7910 / 805 } };
   },
   // GPU time per pass, averaged over reps, via timer queries (Chrome desktop)
   profile: function (reps) {
@@ -2146,7 +2411,7 @@ window.__impact = {
     reps = reps || 20;
     var K = sim.K, stars = S.stars;
     var items = [
-      ['slots', passSlots], ['deposit', passDeposit], ['coarse+mono', passCoarse], ['cell', passCell],
+      ['slots', passSlots], ['deposit', passDeposit], ['coarse+mono', passCoarse], ['cell', passCell], ['pp', passPP],
       ['sim', function () { passSim(false, false, 0); }], ['step', function () { step(false, false); }],
       ['render', render],
       ['render, no dust', function () { sim.K = 0; render(); sim.K = K; }],
@@ -2168,7 +2433,7 @@ window.__impact = {
     if (sim.t > t) build();
     while (sim.phase === 'settle') settleSome(64);
     while (sim.phase === 'approach' && sim.t < t) rigidStep(0.01);
-    while (sim.phase === 'full' && sim.t < t) { step(false, false); sim.t += sim.dt; }
+    while (sim.phase === 'full' && sim.t < t) { step(false, false); sim.t += sim.dt; if (sim.stepNo - analyzedAt >= 360) analyze(true); }
     analyze(true);
     paused = true; $('btn-pause').textContent = 'resume';
     return sim.t;
