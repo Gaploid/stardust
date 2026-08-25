@@ -55,6 +55,10 @@ the largest body — its mass, how much of it came from the impactor, its iron
 fraction and the length of its day from its spin — what is bound in orbit
 around it, what is escaping, and the second body once one has formed, with
 the same make-up: the numbers the literature judges a Moon-forming impact by.
+Under those, the books: the barycentre's drift, the angular momentum in
+units of today's Earth–Moon system and how much of it the run has kept, the
+mechanical energy, the heat the contacts have made, and whether the two add
+up to what they were at the start — plus how the contact cells are doing.
 *Advanced* has the mass ratio, the angle, the speed in units of escape
 velocity, each body's spin as a fraction of its breakup rate (shown as the
 day it makes; none, retrograde, or up to Ćuk & Stewart's 2.6-hour Earth),
@@ -140,19 +144,29 @@ in slices and costs ~2 MB of RAM whatever the count.
 or atomics to lean on, so the two hard parts are done with tricks. Contacts:
 a hashed grid of cells one neighbour-radius wide, filled by depth-peeling —
 every particle draws a one-pixel point at its cell and the depth test keeps
-the lowest index; eight passes give eight slots a cell, and a particle then
+the lowest index; eight passes give eight slots a cell (the books show eight
+are never short, not even at the moment of impact), and a particle then
 searches its 27 cells instead of the whole world. Gravity: particle-mesh —
 mass is splatted onto a 64³ mesh by additive blending (cloud-in-cell), the
-acceleration at every occupied cell is the direct sum over the 12³ fine cells
-around it (the whole planet fits in that block) plus the 16³ coarse cells'
-centres of mass beyond, and particles read it back trilinearly; off the mesh,
-everything on it acts as one mass. The approach is a two-body problem solved
+acceleration at every occupied cell is the direct sum over the 20³ fine cells
+around it (3.75 R⊕: the whole planet and its near disk), taken at the cell's
+centre of mass so that cell on cell is equal and opposite, plus the 16³
+coarse cells' centres of mass beyond, and particles read it back trilinearly;
+off the mesh, everything on it acts as one mass. The approach is a two-body problem solved
 on the CPU with the planets carried rigid, so the expensive part starts at
 first touch. Symplectic Euler, a step set by the contact spring's period; the
 cells are rebuilt every other step (a particle moves under a fifth of a radius
 a step, the search radius has more than half to spare) and the mesh every
 fourth (gravity changes on the scale of a time unit, a step is a thousandth of
 one), which halves the cost of a step without changing a digit of the result.
+The mesh's pull is given all at once, on the step it is measured, as the
+impulse for the four steps it stands for: held for four steps instead it
+lags, and a turning body feeling its own field a little behind it is braked
+by it like by a tide — 0.4 % of the angular momentum in six time units,
+which the books caught; as an impulse it keeps L to 0.01 % over nine hours.
+The energy line's balance is what the step itself eats — the dashpot's work
+is booked with the velocity before the kick — about a fifth of the heat at
+this step size.
 
 The picture is three screen-space passes borrowed from fluid rendering:
 sphere impostors with per-fragment depth, a bilateral blur two particles wide
@@ -160,12 +174,16 @@ that melts them into a skin without crossing a silhouette, and normals from
 the smoothed depth, lit by one sun. Attribute-less dust points can ride on
 the bodies over the top (off by default — *advanced* turns them on), and a
 friends-of-friends pass in a worker reads the positions back every second or
-so to tell the planet from its disk.
+so to tell the planet from its disk and to keep the books.
 
 ## Changelog
 
 Broad strokes, newest first; the commit history tells each one in full.
 
+- **2026-08-26 — The books.** The readout keeps momentum, angular momentum
+  and energy, and they caught the gravity mesh braking a spinning planet by
+  lagging four steps behind it; the mesh now pulls as one impulse where it
+  is measured, and cell on cell at centres of mass, and L holds to 0.01 %.
 - **2026-08-26 — Spin.** Both bodies arrive turning about their axes, with
   eight-hour days by default and sliders from none to a 2.6-hour Earth, each
   cut beforehand as the Maclaurin spheroid its spin calls for. Dust is off by
