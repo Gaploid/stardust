@@ -215,16 +215,18 @@
     <label>impactor <input type="range" id="set-q" min="0.02" max="1" step="0.01" value="0.1"><span id="val-q">0.10 M⊕</span></label>
     <label>angle <input type="range" id="set-angle" min="0" max="85" step="1" value="45"><span id="val-angle">45°</span></label>
     <label>speed <input type="range" id="set-vfac" min="0.8" max="3" step="0.05" value="1.05"><span id="val-vfac">1.05 v.esc</span></label>
+    <label>spin <input type="range" id="set-spin0" min="-0.55" max="0.55" step="0.01" value="0.18"><span id="val-spin0">7.8 h</span></label>
+    <label>impactor spin <input type="range" id="set-spin1" min="-0.55" max="0.55" step="0.01" value="0.20"><span id="val-spin1">8.1 h</span></label>
     <label>bodies <input type="range" id="set-n" min="0" max="4" step="1" value="3"><span id="val-n">131k</span></label>
     <label>bounce <input type="range" id="set-rest" min="0.05" max="0.9" step="0.05" value="0.3"><span id="val-rest">0.30</span></label>
     <label>core <input type="range" id="set-core" min="0" max="45" step="1" value="32"><span id="val-core">32%</span></label>
     <label>density <input type="range" id="set-dens" min="0.5" max="1.2" step="0.05" value="0.75"><span id="val-dens">0.75 ρ⊕</span></label>
-    <label>dust <input type="range" id="set-dust" min="0" max="4000000" step="250000" value="2000000"><span id="val-dust">2M</span></label>
+    <label>dust <input type="range" id="set-dust" min="0" max="4000000" step="250000" value="0"><span id="val-dust">0</span></label>
     <label>exposure <input type="range" id="set-exp" min="0.2" max="4" step="0.1" value="1"><span id="val-exp">1.0</span></label>
     <label>glow <input type="range" id="set-glow" min="0" max="3" step="0.1" value="1"><span id="val-glow">1.0</span></label>
     <label>shading <input type="checkbox" id="set-shade" checked><span id="val-shade">on</span></label>
     <label>stars <input type="checkbox" id="set-stars" checked><span id="val-stars">on</span></label>
-    <div class="note">impactor · angle · speed · bodies · bounce · core · density restart the run</div>
+    <div class="note">impactor · angle · speed · spin · bodies · bounce · core · density restart the run</div>
   </div>
 </div>
 </div>
@@ -259,7 +261,10 @@ var PRESETS = {
   twins:   { q: 1.00, angle: 45, vfac: 1.10, dist: 9,   label: 'twins' },
   shatter: { q: 0.50, angle: 20, vfac: 2.60, dist: 18,  label: 'shatter' }
 };
-var S = { q: 0.1, angle: 45, vfac: 1.05, nIdx: 3, rest: 0.3, core: 0.325, dens: 0.75, dust: 2000000,
+// both bodies arrive turning about the orbital axis, prograde, with days of
+// about eight hours — a young planet's; the sliders take either to none, to
+// retrograde, or up to a Ćuk & Stewart 2.6-hour Earth
+var S = { q: 0.1, angle: 45, vfac: 1.05, spin0: 0.18, spin1: 0.20, nIdx: 3, rest: 0.3, core: 0.325, dens: 0.75, dust: 0,
           exposure: 1.0, glow: 1.0, shade: true, stars: true, follow: false, speed: 4, preset: 'theia' };
 var COL_TARGET = [0.40, 0.58, 0.90], COL_IMPACTOR = [0.96, 0.55, 0.28];
 var FOV = 38 * Math.PI / 180;
@@ -516,6 +521,10 @@ var SIM_FS = [
   'uniform float uKick;',         // 1 — set the bulk velocities this step
   'uniform vec3 uBulk0;',
   'uniform vec3 uBulk1;',
+  'uniform vec3 uCen0;',          // the bodies' centres and spin rates, for
+  'uniform vec3 uCen1;',          // settling and the kick
+  'uniform vec3 uSpin0;',
+  'uniform vec3 uSpin1;',
   GLSL_GRID,
   GLSL_HGRID,
   'layout(location = 0) out vec4 oPos;',
@@ -592,8 +601,9 @@ var SIM_FS = [
   '  vec3 acc = grav + push * (uInvM / ri);',
   '  v += acc * uDt;',
   '  float T = V.w * uCool + heat * uHeatK * uDt / ri;',
-  '  if (uSettle > 0.5) v *= uDamp;',
-  '  if (uKick > 0.5) { v = (body < 3.5) ? uBulk0 : uBulk1; T = 0.0; }',
+  '  vec3 vr = cross(body < 3.5 ? uSpin0 : uSpin1, p - (body < 3.5 ? uCen0 : uCen1));',   // the body's spin at p
+  '  if (uSettle > 0.5) v = vr + (v - vr) * uDamp;',                                       // damp everything but that
+  '  if (uKick > 0.5) { v = (body < 3.5 ? uBulk0 : uBulk1) + vr; T = 0.0; }',
   '  p += v * uDt;',
   '  oPos = vec4(p, body);',
   '  oVel = vec4(v, T);',
@@ -602,7 +612,7 @@ var SIM_FS = [
 ].join('\n');
 
 // The approach is a two-body problem solved on the CPU; the bodies fly in
-// rigid, this pass just carries them.
+// rigid, this pass just carries them — and turns each about its centre.
 var RIGID_FS = [
   '#version 300 es',
   'precision highp float;',
@@ -612,6 +622,12 @@ var RIGID_FS = [
   'uniform sampler2D uAux;',
   'uniform vec3 uBulk0;',
   'uniform vec3 uBulk1;',
+  'uniform vec3 uCen0;',          // centres at the start of the step
+  'uniform vec3 uCen1;',
+  'uniform vec3 uSpin0;',
+  'uniform vec3 uSpin1;',
+  'uniform mat3 uRot0;',          // this step's turn
+  'uniform mat3 uRot1;',
   'uniform float uDt;',
   'layout(location = 0) out vec4 oPos;',
   'layout(location = 1) out vec4 oVel;',
@@ -619,9 +635,11 @@ var RIGID_FS = [
   'void main() {',
   '  ivec2 me = ivec2(gl_FragCoord.xy);',
   '  vec4 P = texelFetch(uPos, me, 0);',
-  '  vec3 bulk = (P.w < 3.5) ? uBulk0 : uBulk1;',
-  '  oPos = vec4(P.xyz + bulk * uDt, P.w);',
-  '  oVel = vec4(bulk, texelFetch(uVel, me, 0).w);',   // so the readout sees the approach
+  '  bool tgt = P.w < 3.5;',
+  '  vec3 bulk = tgt ? uBulk0 : uBulk1, cen = tgt ? uCen0 : uCen1;',
+  '  vec3 arm = (tgt ? uRot0 : uRot1) * (P.xyz - cen);',
+  '  oPos = vec4(cen + arm + bulk * uDt, P.w);',
+  '  oVel = vec4(bulk + cross(tgt ? uSpin0 : uSpin1, arm), texelFetch(uVel, me, 0).w);',   // so the readout sees the approach, spin and all
 
   '  oAux = texelFetch(uAux, me, 0);',
   '}'
@@ -1127,12 +1145,15 @@ function mul(a, b) {
 }
 
 // ---------- building a run ----------
-// A body is a face-centred cubic lattice clipped to a sphere: n lattice points
-// nearest the centre, spacing set by Earth density, a little jitter so nothing
-// lines up. Gravity then settles it for half a time unit before the kick.
-function ball(n, s, rng) {
+// A body is a face-centred cubic lattice clipped to a sphere — or, if it
+// spins, to the Maclaurin spheroid of eccentricity e that is a spinning
+// fluid's equilibrium: n lattice points nearest the centre in the spheroid's
+// own measure, spacing set by Earth density, a little jitter so nothing lines
+// up. Gravity then settles it for a third of a time unit before the kick.
+function ball(n, s, rng, e) {
   var R = Math.cbrt(3 * n * s * s * s / (16 * Math.PI));
-  var lim = Math.ceil(R * 1.2 / s) + 1, R2 = R * R * 1.44, jit = 0.06 * s;
+  var ae = R / Math.pow(1 - e * e, 1 / 6), ce = ae * Math.sqrt(1 - e * e);   // a²c = R³: the volume is the sphere's
+  var lim = Math.ceil(ae * 1.2 / s) + 1, ia2 = 1 / (ae * ae), ic2 = 1 / (ce * ce), jit = 0.06 * s;
   var rot = randRot(rng);
   var basis = [0, 0, 0, 0.5, 0.5, 0, 0.5, 0, 0.5, 0, 0.5, 0.5];
   var pts = [];
@@ -1141,8 +1162,8 @@ function ball(n, s, rng) {
     var y = (j + basis[b * 3 + 1]) * s + (rng() - 0.5) * jit;
     var z = (k + basis[b * 3 + 2]) * s + (rng() - 0.5) * jit;
     var rx = rot[0] * x + rot[1] * y + rot[2] * z, ry = rot[3] * x + rot[4] * y + rot[5] * z, rz = rot[6] * x + rot[7] * y + rot[8] * z;
-    var d2 = rx * rx + ry * ry + rz * rz;
-    if (d2 < R2) pts.push(d2, rx, ry, rz);
+    var d2 = (rx * rx + rz * rz) * ia2 + ry * ry * ic2;
+    if (d2 < 1.44) pts.push(d2, rx, ry, rz);
   }
   var cnt = pts.length / 4, idx = new Array(cnt);
   for (i = 0; i < cnt; i++) idx[i] = i;
@@ -1150,6 +1171,29 @@ function ball(n, s, rng) {
   var out = new Float32Array(n * 3);
   for (i = 0; i < n; i++) { var p = idx[i] * 4; out[i * 3] = pts[p + 1]; out[i * 3 + 1] = pts[p + 2]; out[i * 3 + 2] = pts[p + 3]; }
   return out;
+}
+
+// The Maclaurin spheroid: a uniform fluid spinning at the fraction f of its
+// breakup rate √(GM/R³) settles into an oblate spheroid whose eccentricity
+// e solves  (4/3) f² = (2√(1−e²)/e³)(3 − 2e²)·asin e − 6(1−e²)/e².
+// The right side peaks at 0.449 (e ≈ 0.93); f ≤ 0.55 keeps to the sequence.
+function maclaurin(f) {
+  var want = 4 / 3 * f * f;
+  if (want < 1e-6) return 0;
+  function g(e) { var s2 = 1 - e * e; return 2 * Math.sqrt(s2) / (e * e * e) * (3 - 2 * e * e) * Math.asin(e) - 6 * s2 / (e * e); }
+  var lo = 0.01, hi = 0.93;
+  if (want >= g(hi)) return hi;
+  for (var i = 0; i < 60; i++) { var m = 0.5 * (lo + hi); if (g(m) < want) lo = m; else hi = m; }
+  return 0.5 * (lo + hi);
+}
+// the matrix (column-major) of turning at the rate w for dt
+function turn(w, dt) {
+  var m = Math.hypot(w[0], w[1], w[2]);
+  if (m < 1e-12) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  var x = w[0] / m, y = w[1] / m, z = w[2] / m, th = m * dt, c = Math.cos(th), s = Math.sin(th), t = 1 - c;
+  return [t * x * x + c, t * x * y + s * z, t * x * z - s * y,
+          t * x * y - s * z, t * y * y + c, t * y * z + s * x,
+          t * x * z + s * y, t * y * z - s * x, t * z * z + c];
 }
 
 var sim = null, posBuf = null, velBuf = null, gen = 0;
@@ -1172,13 +1216,19 @@ function build() {
   var n1 = Math.round(N * V1 / (V1 + V2)), n2 = N - n1;
   if (n2 < 16) { n2 = 16; n1 = N - n2; }
   var R1 = Math.cbrt(V1), R2 = Math.cbrt(V2), Rsum = R1 + R2;
+  // spin: a fraction of breakup, √(M/R³) — 1 for Earth, √ρ for the impactor —
+  // about the orbital axis, prograde when positive; each body is cut as the
+  // Maclaurin spheroid for its rate, so it arrives already in equilibrium
+  var w0 = [0, S.spin0, 0], w1 = [0, S.spin1 * Math.sqrt(dens), 0];
+  var e1 = maclaurin(Math.abs(S.spin0)), e2 = maclaurin(Math.abs(S.spin1));
+  var Re1 = R1 / Math.pow(1 - e1 * e1, 1 / 6), Re2 = R2 / Math.pow(1 - e2 * e2, 1 / 6);   // equatorial radii
 
   // layers by radius — the lattice comes out sorted inside-out: the innermost
   // coreV of the volume is core, the outer particle-and-a-bit crust, the rest
   // mantle. Mass is relative to an Earth-mantle particle: core ×2.5, the
   // impactor's ×its density.
   var rng = mulberry(1234567);
-  var b1 = ball(n1, s, rng), b2 = ball(n2, s, rng);
+  var b1 = ball(n1, s, rng, e1), b2 = ball(n2, s, rng, e2);
   var pos = new Float32Array(N * 4), vel = new Float32Array(N * 4);
   var matR = new Float32Array(N), lay = new Uint8Array(N);
   function layers(off, n, R, densB) {
@@ -1228,7 +1278,8 @@ function build() {
   var settle = Math.ceil(0.3 / dt);
   sim = {
     N: N, W: W, H: H, n1: n1, n2: n2, m: mref, a: a, cell: 2.6 * a, dt: dt, k: k, c: cd,
-    R1: R1, R2: R2, M1: M1, M2: M2, M: M, rel: rel, bulk0: bulk0, bulk1: bulk1, vc: vc, vesc: vesc,
+    R1: R1, R2: R2, Re1: Re1, Re2: Re2, M1: M1, M2: M2, M: M, rel: rel, bulk0: bulk0, bulk1: bulk1, vc: vc, vesc: vesc,
+    spin0: w0, spin1: w1, cen0: c1, cen1: c2,
     src: simTarget(W, H, pos, vel), dst: simTarget(W, H, null, null),
     mat: floatTex(W, H, matR, gl.R32F, gl.FLOAT, gl.RED), matR: matR,
     t: 0, phase: 'settle', settleLeft: settle, settleTotal: settle, impactT: -1, com1: [0, 0, 0], stepNo: 0,
@@ -1318,9 +1369,11 @@ function setStaticUniforms() {
   gl.uniform1f(u.uDamp, sim.damp);
   gl.uniform1f(u.uCool, sim.cool);
   gl.uniform1f(u.uHeatK, sim.heatK);
+  gl.uniform3fv(u.uSpin0, sim.spin0); gl.uniform3fv(u.uSpin1, sim.spin1);
 
   u = rigidProg.u; gl.useProgram(rigidProg.p);
   gl.uniform1i(u.uPos, 0); gl.uniform1i(u.uVel, 1); gl.uniform1i(u.uAux, 2);
+  gl.uniform3fv(u.uSpin0, sim.spin0); gl.uniform3fv(u.uSpin1, sim.spin1);
 }
 
 // 1. contact cells, one slot per pass
@@ -1395,6 +1448,8 @@ function passSim(settle, kick) {
   gl.uniform1f(u.uKick, kick ? 1 : 0);
   gl.uniform3fv(u.uBulk0, sim.bulk0);
   gl.uniform3fv(u.uBulk1, sim.bulk1);
+  gl.uniform3fv(u.uCen0, sim.cen0);
+  gl.uniform3fv(u.uCen1, sim.cen1);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   var t = sim.src; sim.src = sim.dst; sim.dst = t;
 }
@@ -1419,10 +1474,15 @@ function settleSome(n) {
 }
 
 // the approach: the two-body problem, leapfrog on the CPU, the bodies carried
-// rigid on the GPU by the frame's mean velocities; at first touch, the kick
+// rigid on the GPU by the frame's mean velocities, each turned by its spin;
+// at first touch, the kick
+function centres(r) {
+  var M = sim.M, M1 = sim.M1, M2 = sim.M2;
+  return [[-r[0] * M2 / M, -r[1] * M2 / M, -r[2] * M2 / M], [r[0] * M1 / M, r[1] * M1 / M, r[2] * M1 / M]];
+}
 function rigidStep(dtF) {
   var r = sim.rel.r, v = sim.rel.v, M = sim.M, M1 = sim.M1, M2 = sim.M2;
-  var r0 = [r[0], r[1], r[2]], n = 8, h = dtF / n, i;
+  var r0 = [r[0], r[1], r[2]], n = 8, h = dtF / n, i, cen = centres(r0);
   function acc() { var d2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2], f = -M * Math.pow(d2, -1.5); return [r[0] * f, r[1] * f, r[2] * f]; }
   var a = acc();
   for (i = 0; i < n; i++) {
@@ -1444,13 +1504,18 @@ function rigidStep(dtF) {
   gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, sim.src.aux);
   gl.uniform3fv(u.uBulk0, sim.bulk0);
   gl.uniform3fv(u.uBulk1, sim.bulk1);
+  gl.uniform3fv(u.uCen0, cen[0]);
+  gl.uniform3fv(u.uCen1, cen[1]);
+  gl.uniformMatrix3fv(u.uRot0, false, turn(sim.spin0, dtF));
+  gl.uniformMatrix3fv(u.uRot1, false, turn(sim.spin1, dtF));
   gl.uniform1f(u.uDt, dtF);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   var t = sim.src; sim.src = sim.dst; sim.dst = t;
   sim.t += dtF;
-  if (Math.hypot(r[0], r[1], r[2]) <= sim.R1 + sim.R2 + 2 * sim.a) {
+  if (Math.hypot(r[0], r[1], r[2]) <= sim.Re1 + sim.Re2 + 2 * sim.a) {   // the equators touch
     sim.bulk0 = [-v[0] * M2 / M, -v[1] * M2 / M, -v[2] * M2 / M];
     sim.bulk1 = [v[0] * M1 / M, v[1] * M1 / M, v[2] * M1 / M];
+    cen = centres(r); sim.cen0 = cen[0]; sim.cen1 = cen[1];
     sim.stepNo = 0;           // the bodies have moved: rebuild cells and mesh
     step(false, true);
     sim.t += sim.dt;
@@ -1565,6 +1630,7 @@ try {
 function applyReport(r) { report = r; sim.com1 = r.com; }
 function analyze(sync) {
   if (analyzing && !sync) return;
+  if (sync) sim.gen = ++gen;   // whatever the worker is still computing is for the state before this call: drop it
   var N = sim.N;
   var P = (!sync && posBuf && posBuf.length === N * 4) ? posBuf : new Float32Array(N * 4);
   var V = (!sync && velBuf && velBuf.length === N * 4) ? velBuf : new Float32Array(N * 4);
@@ -1721,7 +1787,7 @@ function render() {
     gl.drawArrays(gl.POINTS, 0, STAR_COUNT);
     gl.bindVertexArray(vao);
   }
-  if (sim) {
+  if (sim && sim.K > 0) {
     var u = dustProg.u;
     gl.useProgram(dustProg.p);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sim.src.pos);
@@ -1766,6 +1832,13 @@ function fmtTime(t) {
   return 'T+ ' + hh + 'h ' + (mm < 10 ? '0' : '') + mm + 'm';
 }
 function fmtCount(n) { return n >= 1e6 ? (n / 1e6).toFixed(n % 1e6 ? 1 : 0) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n); }
+// a spin as the day it makes: f the fraction of breakup, wb the body's
+// breakup rate in 1/time-unit; negative is retrograde
+function fmtSpin(f, wb) {
+  if (Math.abs(f) < 0.005) return 'none';
+  var h = 2 * Math.PI / (Math.abs(f) * wb) * T_UNIT / 3600;
+  return (f < 0 ? '−' : '') + (h >= 10 ? Math.round(h) : h.toFixed(1)) + ' h';
+}
 var fpsFrames = 0, fpsT0 = performance.now(), fps = 0;
 function hud() {
   var sub = PRESETS[S.preset] ? PRESETS[S.preset].label : 'custom';
@@ -1777,7 +1850,7 @@ function hud() {
   else sub += ' · aftermath';
   $('hud-sub').textContent = sub;
   $('hud-clock').textContent = sim ? fmtTime(sim.t) : 'T+ 0h 00m';
-  $('hud-fps').textContent = sim ? fmtCount(sim.N) + ' bodies · ' + fmtCount(sim.N * sim.K) + ' dust · ' + Math.round(sim.vc * V_UNIT) + ' km/s · ' + fps + ' fps' : '';
+  $('hud-fps').textContent = sim ? fmtCount(sim.N) + ' bodies · ' + (sim.K ? fmtCount(sim.N * sim.K) + ' dust · ' : '') + Math.round(sim.vc * V_UNIT) + ' km/s · ' + fps + ' fps' : '';
   var rep = $('hud-report');
   if (report && sim) {
     var pct = function (x) { return Math.round(x * 100) + '%'; };
@@ -1823,6 +1896,8 @@ function syncSliders() {
   $('set-q').value = S.q; $('val-q').textContent = S.q.toFixed(2) + ' M⊕';
   $('set-angle').value = S.angle; $('val-angle').textContent = S.angle + '°';
   $('set-vfac').value = S.vfac; $('val-vfac').textContent = S.vfac.toFixed(2) + ' v.esc';
+  $('set-spin0').value = S.spin0; $('val-spin0').textContent = fmtSpin(S.spin0, 1);
+  $('set-spin1').value = S.spin1; $('val-spin1').textContent = fmtSpin(S.spin1, Math.sqrt(S.dens));
   $('set-n').value = S.nIdx; $('val-n').textContent = N_LABELS[S.nIdx];
   $('set-rest').value = S.rest; $('val-rest').textContent = S.rest.toFixed(2);
   $('set-core').value = Math.round(S.core * 100); $('val-core').textContent = Math.round(S.core * 100) + '%';
@@ -1864,6 +1939,8 @@ function onRange(id, live, apply, keepPreset) {
 onRange('set-q', null, function (v) { S.q = v; });
 onRange('set-angle', null, function (v) { S.angle = v; });
 onRange('set-vfac', null, function (v) { S.vfac = v; });
+onRange('set-spin0', null, function (v) { S.spin0 = v; }, true);
+onRange('set-spin1', null, function (v) { S.spin1 = v; }, true);
 onRange('set-n', null, function (v) { S.nIdx = v | 0; }, true);
 onRange('set-rest', null, function (v) { S.rest = v; }, true);
 onRange('set-core', null, function (v) { S.core = v / 100; }, true);

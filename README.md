@@ -48,14 +48,19 @@ counts them.
 
 Presets: **theia** (the canonical Moon-forming impact, 0.1 M⊕ at 45°),
 **head-on**, **hit & run** (grazing and fast — the impactor survives and
-leaves), **twins** (equal masses), **shatter** (2.6× escape speed). The readout
-groups particles by contact every second or so and reports the largest body —
-its mass, how much of it came from the impactor, its iron fraction and the
-length of its day from its spin — what is bound in orbit around it, what is
-escaping, and the second body once one has formed, with the same make-up: the
-numbers the literature judges a Moon-forming impact by. *Advanced* has the
-mass ratio, the angle, the speed in units of escape velocity, the body count,
-the restitution, the core mass fraction and the impactor's density.
+leaves), **twins** (equal masses), **shatter** (2.6× escape speed). Both
+bodies arrive turning about their axes, prograde, with days of about eight
+hours — a young planet's. The readout groups particles by contact every second or so and reports
+the largest body — its mass, how much of it came from the impactor, its iron
+fraction and the length of its day from its spin — what is bound in orbit
+around it, what is escaping, and the second body once one has formed, with
+the same make-up: the numbers the literature judges a Moon-forming impact by.
+*Advanced* has the mass ratio, the angle, the speed in units of escape
+velocity, each body's spin as a fraction of its breakup rate (shown as the
+day it makes; none, retrograde, or up to Ćuk & Stewart's 2.6-hour Earth),
+the body count, the restitution, the core mass fraction and the impactor's
+density. A spinning body is cut as the Maclaurin spheroid its spin calls for,
+so it arrives already in equilibrium.
 
 It is not SPH — no shocks, no vaporization — but everything the eye picks out
 of the real runs is here: the deformation, the tidal arm, the disk,
@@ -152,14 +157,19 @@ one), which halves the cost of a step without changing a digit of the result.
 The picture is three screen-space passes borrowed from fluid rendering:
 sphere impostors with per-fragment depth, a bilateral blur two particles wide
 that melts them into a skin without crossing a silhouette, and normals from
-the smoothed depth, lit by one sun. Two million attribute-less dust points
-ride on the bodies over the top, and a friends-of-friends pass in a worker
-reads the positions back every second or so to tell the planet from its disk.
+the smoothed depth, lit by one sun. Attribute-less dust points can ride on
+the bodies over the top (off by default — *advanced* turns them on), and a
+friends-of-friends pass in a worker reads the positions back every second or
+so to tell the planet from its disk.
 
 ## Changelog
 
 Broad strokes, newest first; the commit history tells each one in full.
 
+- **2026-08-26 — Spin.** Both bodies arrive turning about their axes, with
+  eight-hour days by default and sliders from none to a 2.6-hour Earth, each
+  cut beforehand as the Maclaurin spheroid its spin calls for. Dust is off by
+  default.
 - **2026-08-25 — Cores.** Both bodies get an iron core, a mantle and a crust,
   with density as mass; the readout says what each piece is made of and how
   long the planet's day is.
