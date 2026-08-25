@@ -1928,7 +1928,7 @@ function render() {
     gl.useProgram(starProg.p);
     gl.uniformMatrix4fv(starProg.u.uVP, false, vp);
     gl.uniform3fv(starProg.u.uEye, eye);
-    gl.uniform1f(starProg.u.uBright, 1.0);
+    gl.uniform1f(starProg.u.uBright, 0.5);
     gl.uniform1f(starProg.u.uPx, Math.max(1, h / 900));
     gl.uniform1f(starProg.u.uT, performance.now() / 1000);
     gl.bindVertexArray(starVao);
