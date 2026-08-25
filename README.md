@@ -38,16 +38,24 @@ from 0.02 to 1 M⊕ — approach under their own gravity and collide. They are
 made of 16k to 262k body-particles that all pull on each other; touching
 particles push back like a stiff spring and bleed energy into heat, so the
 material stays incompressible, splashes, glows where it was hit, and clumps
-back together. Time runs in real hours: the unit is √(R³/GM) for Earth, 13.4
-minutes, and the clock in the corner counts them.
+back together. Both bodies are differentiated: an iron core carrying a third
+of the mass at two and a half times the mantle's density (Earth's numbers),
+a mantle, and a crust; the impactor has a Mars-like density. Density is mass
+— every particle has the same size, the core's weigh 2.5× — so cores sink
+and the readout can say what the pieces are made of. Time runs in real hours:
+the unit is √(R³/GM) for Earth, 13.4 minutes, and the clock in the corner
+counts them.
 
 Presets: **theia** (the canonical Moon-forming impact, 0.1 M⊕ at 45°),
 **head-on**, **hit & run** (grazing and fast — the impactor survives and
 leaves), **twins** (equal masses), **shatter** (2.6× escape speed). The readout
-groups particles by contact every few frames and reports the largest body, what
-is bound in orbit around it, what is escaping, and the second body once one has
-formed. *Advanced* has the mass ratio, the angle, the speed in units of escape
-velocity, the body count and the restitution.
+groups particles by contact every second or so and reports the largest body —
+its mass, how much of it came from the impactor, its iron fraction and the
+length of its day from its spin — what is bound in orbit around it, what is
+escaping, and the second body once one has formed, with the same make-up: the
+numbers the literature judges a Moon-forming impact by. *Advanced* has the
+mass ratio, the angle, the speed in units of escape velocity, the body count,
+the restitution, the core mass fraction and the impactor's density.
 
 It is not SPH — no shocks, no vaporization — but everything the eye picks out
 of the real runs is here: the deformation, the tidal arm, the disk,
@@ -152,6 +160,12 @@ reads the positions back every second or so to tell the planet from its disk.
 
 Broad strokes, newest first; the commit history tells each one in full.
 
+- **2026-08-25 — Cores.** Both bodies get an iron core, a mantle and a crust,
+  with density as mass; the readout says what each piece is made of and how
+  long the planet's day is.
+- **2026-08-25 — A brighter sky.** The catalogue stars get a steeper magnitude
+  curve and glows on the bright few, on by default; the impact page gets the
+  same real sky instead of a hash.
 - **2026-08-25 — Impact.** A second page: two planets of real mass collide
   under their own gravity, on the GPU, from the canonical Moon-forming impact
   to a hit-and-run. A readout says what stays, what orbits, and what escapes.

@@ -410,7 +410,7 @@
     <label>city lights <input type="checkbox" id="set-city" checked><span id="val-city">on</span></label>
     <label>atmosphere <input type="checkbox" id="set-atmo" checked><span id="val-atmo">on</span></label>
     <label>trails <input type="checkbox" id="set-trails"><span id="val-trails">off</span></label>
-    <label>stars <input type="checkbox" id="set-stars"><span id="val-stars">off</span></label>
+    <label>stars <input type="checkbox" id="set-stars" checked><span id="val-stars">on</span></label>
     <label>vsync <input type="checkbox" id="set-vsync" checked><span id="val-vsync">on</span></label>
     <label>debug <input type="checkbox" id="set-debug"><span id="val-debug">off</span></label>
   </div>
@@ -546,7 +546,7 @@
   // focus has no slider — the focal plane sits just in front of the shape and
   // the depth of field reads as a soft near edge rather than as an effect
   var SET = { size: 0.25, alpha: 1.15, hand: 0.19, count: 1000000, focus: 0.13, floor: true,
-              trails: false, stars: false, city: true, atmo: true, vsync: true };
+              trails: false, stars: true, city: true, atmo: true, vsync: true };
   var fovF = 2.5;     // fixed 30mm-equivalent framing
   var isCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
   if (isCoarse) SET.count = 300000;   // phone GPUs: start lighter, still adjustable
@@ -1904,6 +1904,7 @@
     'uniform float uT;',
     'uniform float uAmt;',
     'varying vec3 vCol;',
+    'varying float vHalo;',
     'void main(){',
     '  vec3 v = uRot * aDir;',
     // the camera sits at +z looking down -z, so only that half of the sky is up
@@ -1912,25 +1913,33 @@
     '  gl_Position = vec4(v.x*uFovF*iz/uAspect, v.y*uFovF*iz + uYOff, 0.0, 1.0);',
     '  float mag = aStar.x * 15.9375 - 2.0;',        // 255/16, the packing step
     '  float m = 6.0 - mag;',                        // 0 at the limit, 7.5 at Sirius
-    // magnitude is already logarithmic, so linear in magnitude is what the eye does
-    '  float lum = (0.85 + m * 0.30) * uAmt;',
+    // magnitude is already logarithmic, so linear in magnitude is what the eye
+    // does; the slope is what makes Vega stand out from the crowd
+    '  float lum = (0.9 + m * 0.55) * uAmt;',
+    '  float halo = smoothstep(3.0, 7.5, m);',       // the bright few get a glow
     '  float bv = aStar.y * 3.1875 - 0.5;',          // 255/80
     '  vec3 tint = mix(vec3(0.72, 0.82, 1.00), vec3(1.00, 0.83, 0.66), clamp((bv + 0.15) / 1.45, 0.0, 1.0));',
     // atmosphere-free twinkle, slow and slight, each star on its own phase
     '  float ph = fract(aDir.x*133.7 + aDir.y*71.3 + aDir.z*29.1) * 6.2831853;',
     '  lum *= 0.86 + 0.14 * sin(uT * 1.7 + ph);',
     '  vCol = tint * lum;',
-    '  gl_PointSize = clamp(1.6 + m * 0.55, 1.6, 6.5) * uPx;',
+    '  vHalo = halo;',
+    '  gl_PointSize = clamp(2.0 + m * 0.9, 2.0, 9.0) * (1.0 + 0.9 * halo) * uPx;',
     '}'
   ].join('\n');
   var STAR_FSH = [
     'precision mediump float;',
     'varying vec3 vCol;',
+    'varying float vHalo;',
     'void main(){',
     '  vec2 c = gl_PointCoord - 0.5;',
     '  float d2 = dot(c, c);',
     '  if (d2 > 0.25) discard;',
-    '  float a = exp(-d2*6.0) * smoothstep(0.25, 0.14, d2);',
+    // a tight core; the bright stars' sprites are larger, so their core is
+    // pulled back in and a soft glow fills the rest
+    '  float core = exp(-d2 * (9.0 + 27.0 * vHalo));',
+    '  float glow = vHalo * 0.35 * exp(-d2 * 4.0);',
+    '  float a = (core + glow) * smoothstep(0.25, 0.12, d2);',
     '  gl_FragColor = vec4(vCol * a, a);',
     '}'
   ].join('\n');
