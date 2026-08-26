@@ -30,20 +30,11 @@ Drag rotates · Space scatters · wheel zooms.
 
 ## Impact
 
-**Live: https://gaploid.github.io/stardust/collision.html**
-
-A second page, and a different kind of thing: not a shape to assemble but a
-simulation. Two planets of real mass — a proto-Earth and an impactor from 0.02
-to 1 M⊕, differentiated iron core to crust — fall together under their own
-gravity and collide: 16k to 262k particles, each pulling on all the others,
-touching ones pushing back like a stiff spring and bleeding the energy into
-heat that stays in the rock and lights it, deep red past 900 K, white past
-40 000. Five presets, from the canonical Moon-forming impact to a hit-and-run;
-the readout follows the largest body and its disk, says what Moon that disk
-would make, and keeps the books. Not SPH — no shocks, no vaporization — but the
-deformation, the tidal arm, the disk and the re-accretion are all there.
-
-Drag rotates · wheel zooms · Space pauses · R restarts · F follows the largest body.
+The impact simulation — two planets of real mass colliding under their own
+gravity, from the canonical Moon-forming impact to a hit-and-run — grew into a
+project of its own and moved out on 2026-08-26:
+**[Cosmic Collisions](https://github.com/Gaploid/cosmic_collisions)**, live at
+https://gaploid.github.io/cosmic_collisions/.
 
 ## Data sources
 
@@ -98,84 +89,20 @@ via the Harvard/SAO catalogue archive. Public domain / free to use with credit.
 
 ## Tech
 
-Two self-contained pages, no dependencies and no build step. `index.html` is
+One self-contained page, no dependencies and no build step. `index.html` is
 WebGL 1: one point-sprite pass, all motion in the vertex shader, exposure
 normalized against particle count and size so those sliders change grain, not
 brightness (10M points is 333 MB of VRAM, so it is opt-in).
-
-`collision.html` is WebGL 2 with no compute shaders to lean on, so the hard
-parts are tricks: contacts from a hashed grid filled by depth-peeling, gravity
-from a 64³ particle mesh with the loose material corrected pairwise against it,
-P³M-style, so moonlets bind instead of smearing. Its bodies are onions of
-Fibonacci-spiral shells — a lattice cut to a sphere is terraced, and the skin
-drew every step as a ring — relaxed and then crept into equilibrium so that
-nothing pops out of the surface. Symplectic Euler, Morton order, and books on momentum and energy that caught most of what was wrong. The
-picture is screen-space fluid rendering — impostors, a bilateral blur that melts
-them into a skin, a coverage cut that takes the beads off the limb — with hot
-rock glowing by its temperature and lighting everything else. ACES and FXAA.
 
 ## Changelog
 
 Broad strokes, newest first; the commit history tells each one in full.
 
-- **2026-08-26 — A shorter panel.** The advanced panel lost its two spin
-  sliders — a spin is a property of the rock, like its density, and both bodies
-  keep the eight-hour day they start with — and says the rest in fewer words:
-  the units moved into the labels, and a rule marks where the settings that
-  restart the run end.
-- **2026-08-26 — Skin.** The bodies are built as onions of Fibonacci shells
-  instead of a lattice cut to a sphere, so the concentric rings the crust wore
-  in every frame are gone; the pile is relaxed before it settles and settles
-  at a creep, so nothing pops out of the surface; the grains are 4 % smaller,
-  since a random pile jams looser than a lattice, which keeps the radius and
-  the books; and the skin's silhouette is cut and feathered by a coverage
-  field, which takes the staircase of lit discs off the limb.
-- **2026-08-26 — The film.** An ACES-style tone curve — deeper shadows, a
-  clean roll-off at the hottest — the sun as a disk with a glare that the
-  bodies occlude, a light vignette, and FXAA. The knobs live in
-  `__impact.look`.
-- **2026-08-26 — Lit by the magma.** The planet and the second body light
-  what is near them with the glow of their own surface: the arm and the
-  disk get their planet-facing sides in orange, a moonlet is lit from
-  below, the planet's cold far side stays dark, and the bodies shadow each
-  other as balls — the first cut lit the crust spalled off the impactor's
-  far side through the impactor, a glint along its rim.
-- **2026-08-26 — Heat.** The heat the contacts make stays in the material
-  and spreads by contact; every particle has a temperature and the rock glows
-  by it — the planet a magma ocean at 3000 K a day after the canonical
-  impact, the far side cold, the sparks off the contact white — and the
-  readout says the mean. Bloom on what is brighter than white. On the way:
-  the books were booking a barely-loaded contact's spring work as heat with
-  either sign; the balance goes from −2.8 % to under a percent.
-- **2026-08-26 — Faster.** A step at 131k from 2.5 ms to 1.4, and 4× runs at
-  30 fps instead of 19: empty mesh blocks skipped, the mesh every eighth
-  step, the particles kept in spatial order, the analysis read back without
-  waiting, the spring let go after the splash. And the mesh deposit was
-  losing 2 % of the mass to half-float rounding; it blends in full floats.
-- **2026-08-26 — Dust, gone.** The points that rode on the particles never
-  read as anything but noise; the skin is the body.
-- **2026-08-26 — The disk binds.** Moonlets came apart into puffs: a cell
-  of the gravity mesh is five particles wide and a moonlet is a cell or two.
-  The loose material now gets its gravity corrected pairwise, P³M-style, and
-  the disk collects into moonlets that stay; a moon line says what Moon the
-  disk would make.
-- **2026-08-26 — The books.** The readout keeps momentum, angular momentum
-  and energy, and they caught the gravity mesh braking a spinning planet by
-  lagging four steps behind it; the mesh now pulls as one impulse where it
-  is measured, and cell on cell at centres of mass, and L holds to 0.01 %.
-- **2026-08-26 — Spin.** Both bodies arrive turning about their axes, with
-  eight-hour days by default and sliders from none to a 2.6-hour Earth, each
-  cut beforehand as the Maclaurin spheroid its spin calls for. Dust is off by
-  default.
-- **2026-08-25 — Cores.** Both bodies get an iron core, a mantle and a crust,
-  with density as mass; the readout says what each piece is made of and how
-  long the planet's day is.
+- **2026-08-26 — Impact moves out.** The second page became a project of its
+  own and left for [Cosmic Collisions](https://github.com/Gaploid/cosmic_collisions),
+  with its history; what stays here is the animation.
 - **2026-08-25 — A brighter sky.** The catalogue stars get a steeper magnitude
-  curve and glows on the bright few, on by default; the impact page gets the
-  same real sky instead of a hash.
-- **2026-08-25 — Impact.** A second page: two planets of real mass collide
-  under their own gravity, on the GPU, from the canonical Moon-forming impact
-  to a hit-and-run. A readout says what stays, what orbits, and what escapes.
+  curve and glows on the bright few, on by default.
 - **2026-08-25 — Mars, with Phobos and Deimos.** The Viking colour mosaic over
   MOLA relief, read back in enhanced red. Two procedural moons in tilted
   orbits, tidally locked and rigid in the swell.
