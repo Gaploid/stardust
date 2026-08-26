@@ -151,7 +151,8 @@ every particle draws a one-pixel point at its cell and the depth test keeps
 the lowest index; eight passes give eight slots a cell (the books show eight
 are never short, not even at the moment of impact), and a particle then
 searches its 27 cells instead of the whole world. Gravity: particle-mesh —
-mass is splatted onto a 64³ mesh by additive blending (cloud-in-cell), the
+mass is splatted onto a 64³ mesh by additive blending in full floats
+(cloud-in-cell; half floats lose 2 % of a dense cell's mass to rounding), the
 acceleration at every occupied cell is the direct sum over the 20³ fine cells
 around it (3.75 R⊕: the whole planet and its near disk), taken at the cell's
 centre of mass so that cell on cell is equal and opposite, plus the 16³
@@ -173,6 +174,9 @@ cells are rebuilt every other step (a particle moves under a fifth of a radius
 a step, the search radius has more than half to spare) and the mesh every
 eighth (gravity changes on the scale of a time unit, a step is a thousandth of
 one), which halves the cost of a step without changing a digit of the result.
+Every few thousand steps the particles are put back in spatial (Morton)
+order — every per-particle texture relabelled, nothing else — so that a
+particle's neighbours are its neighbours in memory too.
 The mesh's pull is given all at once, on the step it is measured, as the
 impulse for the eight steps it stands for: held for those steps instead it
 lags, and a turning body feeling its own field a little behind it is braked
