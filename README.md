@@ -185,15 +185,16 @@ this step size.
 The picture is three screen-space passes borrowed from fluid rendering:
 sphere impostors with per-fragment depth, a bilateral blur two particles wide
 that melts them into a skin without crossing a silhouette, and normals from
-the smoothed depth, lit by one sun. Attribute-less dust points can ride on
-the bodies over the top (off by default — *advanced* turns them on), and a
-friends-of-friends pass in a worker reads the positions back every second or
-so to tell the planet from its disk and to keep the books.
+the smoothed depth, lit by one sun. A friends-of-friends pass in a worker
+reads the positions back every second or so to tell the planet from its disk
+and to keep the books.
 
 ## Changelog
 
 Broad strokes, newest first; the commit history tells each one in full.
 
+- **2026-08-26 — Dust, gone.** The points that rode on the particles never
+  read as anything but noise; the skin is the body.
 - **2026-08-26 — The disk binds.** Moonlets came apart into puffs: a cell
   of the gravity mesh is five particles wide and a moonlet is a cell or two.
   The loose material now gets its gravity corrected pairwise, P³M-style, and
