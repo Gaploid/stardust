@@ -253,6 +253,8 @@ var floatBlend = !!gl.getExtension('EXT_float_blend');
 // Every body-particle carries the same mass, so a body's mass is a head count
 // and — at Earth density — its radius is the cube root of its mass.
 var T_UNIT = 805, V_UNIT = 7.91;
+var E_KG = 6.256e7;                         // GM⊕/R⊕: the energy unit per kilogram, J/kg
+var CP_ROCK = 1200, CP_IRON = 450;          // heat capacities, J/kg·K — molten silicate, liquid iron
 var L_EM = 0.1163;                          // the Earth–Moon system's angular momentum today, 3.5e34 kg m²/s, in M⊕√(GM⊕R⊕)
 var N_CHOICES = [16384, 32768, 65536, 131072, 262144];
 var N_LABELS = ['16k', '33k', '65k', '131k', '262k'];
@@ -273,6 +275,9 @@ var PRESETS = {
 var S = { q: 0.1, angle: 45, vfac: 1.05, spin0: 0.18, spin1: 0.20, nIdx: 3, rest: 0.3, core: 0.325, dens: 0.75,
           exposure: 1.0, glow: 1.0, shade: true, stars: true, follow: false, speed: 4, preset: 'theia' };
 var COL_TARGET = [0.40, 0.58, 0.90], COL_IMPACTOR = [0.96, 0.55, 0.28];
+// the look of the heat: the glow's brightness scale and white point in K,
+// what blooms (brighter than this), and how much of the halo is laid back
+var LOOK = { glowT: 12000, white: 40000, bloomThr: 1.0, bloomK: 0.3 };
 var FOV = 38 * Math.PI / 180;
 
 // ---------- shaders ----------
@@ -280,14 +285,19 @@ var GLSL_HASH = [
   'uint hash(uint x) { x ^= x >> 16u; x *= 0x7feb352du; x ^= x >> 15u; x *= 0x846ca68bu; x ^= x >> 16u; return x; }',
   'float rnd(uint x) { return float(hash(x)) * (1.0 / 4294967296.0); }'
 ].join('\n');
-// molten rock: dark red, orange, then yellow-white
-var GLSL_HEAT = [
-  'vec3 heat(float t) {',
-  '  t = max(t, 0.0);',
-  '  float r = smoothstep(0.0, 0.25, t);',
-  '  float g = smoothstep(0.15, 0.7, t) * 0.75;',
-  '  float b = smoothstep(0.45, 1.3, t) * 0.65;',
-  '  return vec3(r, g, b) * min(t * 2.5, 2.2);',
+// hot rock's own light, by its temperature: the Planckian colour — deep red
+// past 900 K, orange by 5000, yellow by 20 000, white past 40 000 — and a
+// brightness that climbs with it and levels off: not T⁴, which would burn
+// out at 3000 K, but a 5000 K surface matches a sunlit one and a 15 000 K
+// one is twice as bright. The material the contact throws out comes off at
+// 10 000–40 000 K, the far side of the target sits at 1000: both have to
+// read. The knobs are in LOOK.
+var GLSL_GLOW = [
+  'uniform float uGlowT;',       // the temperature scale of the brightness: 2.5 × (1 − e^−((T−800)/uGlowT)^1.3)
+  'uniform float uWhite;',       // where the colour reaches white
+  'vec3 glow(float T) {',
+  '  vec3 c = vec3(1.0, pow(clamp((T - 950.0) / (uWhite - 950.0), 0.0, 1.0), 0.6), pow(clamp((T - 1900.0) / (uWhite - 1900.0), 0.0, 1.0), 2.0));',   // blue stays out until the green is nearly in: fire, not pink
+  '  return c * 2.5 * (1.0 - exp(-pow(max(T - 800.0, 0.0) / uGlowT, 1.3)));',
   '}'
 ].join('\n');
 // what a body-particle is made of, from P.w = layer + 4·body: crust in the
@@ -535,7 +545,7 @@ var SIM_FS = [
   'precision highp int;',
   'precision highp sampler2D;',
   'uniform sampler2D uPos;',      // xyz — position, w — body (0 target, 1 impactor)
-  'uniform sampler2D uVel;',      // xyz — velocity, w — heat
+  'uniform sampler2D uVel;',      // xyz — velocity, w — temperature, K
   'uniform sampler2D uForce;',
   'uniform sampler2D uMono;',
   'uniform sampler2D uMat;',      // r — mass, in Earth-mantle particles
@@ -556,8 +566,9 @@ var SIM_FS = [
   'uniform float uC;',            // contact dashpot
   'uniform float uInvM;',
   'uniform float uDamp;',
-  'uniform float uCool;',
-  'uniform float uHeatK;',
+  'uniform float uTk;',           // kelvins per unit of heat in a mantle particle
+  'uniform float uKappa;',        // how fast touching particles share their heat
+  'uniform float uCpIron;',       // iron's heat capacity over the silicates'
   'uniform float uSettle;',       // 1 — damp everything (settling)
   'uniform float uKick;',         // 1 — set the bulk velocities this step
   'uniform vec3 uBulk0;',
@@ -566,7 +577,7 @@ var SIM_FS = [
   'uniform vec3 uCen1;',          // settling and the kick
   'uniform vec3 uSpin0;',
   'uniform vec3 uSpin1;',
-  'uniform sampler2D uQ;',        // r — the energy this particle has dissipated so far
+  'uniform sampler2D uQ;',        // r — the heat this particle holds
   'uniform sampler2D uPPSlot;',   // r — this particle's seat on the loose list, or -1
   'uniform sampler2D uPPForce;',  // the pairwise correction, by seat
   GLSL_GRID,
@@ -584,8 +595,10 @@ var SIM_FS = [
   '  vec3 p = P.xyz, v = V.xyz;',
   '  float body = P.w;',
   '  float ri = texelFetch(uMat, me, 0).r;',
+  '  float ci = ri * (mod(body, 4.0) < 0.5 ? uCpIron : 1.0);',   // heat capacity, in a mantle particle's: iron holds less per kilogram
+  '  float Ti = V.w;',
   '  vec3 push = vec3(0.0);',
-  '  float heat = 0.0, nb = 0.0, lost = 0.0;',
+  '  float nb = 0.0, lost = 0.0, flow = 0.0;',
   '  ivec3 c = ivec3(floor(p * uInvCell));',
   '  vec3 c0 = vec3(c) * uCell;',
   '  for (int dz = -1; dz <= 1; dz++) for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {',
@@ -599,22 +612,23 @@ var SIM_FS = [
   '      int j = int(fj);',
   '      if (j == myIdx) continue;',
   '      ivec2 tj = ivec2(j % uSize.x, j / uSize.x);',
-  '      vec3 d = texelFetch(uPos, tj, 0).xyz - p;',
+  '      vec4 Pj = texelFetch(uPos, tj, 0);',
+  '      vec3 d = Pj.xyz - p;',
   '      float r2 = dot(d, d);',
   '      if (r2 < uLink2) {',
   '        float r = sqrt(r2);',
   '        vec3 n = d / max(r, 1e-6);',
   '        float ov = uTouch - r;',
   '        if (ov > 0.0) {',
-  '          vec3 vo = texelFetch(uVel, tj, 0).xyz;',
+  '          vec4 Vj = texelFetch(uVel, tj, 0);',
   '          float rj = texelFetch(uMat, tj, 0).r;',
   '          float cij = uC * sqrt(2.0 * ri * rj / (ri + rj));',   // the dashpot for this pair's reduced mass
-  '          float vn = dot(vo - v, n);',
-  '          float fn = max(uK * ov - cij * vn, 0.0), on = step(0.0001, fn);',
+  '          float vn = dot(Vj.xyz - v, n);',
+  '          float fs = uK * ov - cij * vn, fn = max(fs, 0.0), on = step(0.0, fs);',
   '          push -= n * fn;',
-  '          heat += cij * vn * vn * on;',
-  '          lost += cij * vn * vn * on + uK * ov * vn * (1.0 - on);',   // the dashpot's work — or, with the no-tension clamp holding, the spring energy that just vanishes
-
+  '          lost += cij * vn * vn * on + uK * ov * vn * (1.0 - on);',   // the dashpot's work — or, with the no-tension clamp holding, the spring energy that just vanishes (vn > 0 there, so never negative)
+  '          float cj = rj * (mod(Pj.w, 4.0) < 0.5 ? uCpIron : 1.0);',
+  '          flow += (Vj.w - Ti) * (2.0 * ci * cj / (ci + cj));',      // heat crosses the contact, hot to cold — the other side books the same number with the sign turned, so none is made or lost
   '        }',
   '        nb += 1.0;',
   '      }',
@@ -640,15 +654,18 @@ var SIM_FS = [
   '  float seat = texelFetch(uPPSlot, me, 0).r;',
   '  if (seat >= 0.0) grav += texelFetch(uPPForce, ivec2(int(seat) & 127, int(seat) >> 7), 0).xyz;',
   '  v += push * (uInvM / ri) * uDt + grav * uGDt;',
-  '  float T = V.w * uCool + heat * uHeatK * uDt / ri;',
   '  vec3 vr = cross(body < 3.5 ? uSpin0 : uSpin1, p - (body < 3.5 ? uCen0 : uCen1));',   // the body's spin at p
   '  if (uSettle > 0.5) v = vr + (v - vr) * uDamp;',                                       // damp everything but that
-  '  if (uKick > 0.5) { v = (body < 3.5 ? uBulk0 : uBulk1) + vr; T = 0.0; }',
+  '  if (uKick > 0.5) v = (body < 3.5 ? uBulk0 : uBulk1) + vr;',
+  // the heat: what the contacts dissipate stays in the material — nothing
+  // radiates it away in hours — and spreads by contact; the settling's is
+  // not counted, the bodies arrive cold
+  '  float Q = uSettle > 0.5 ? 0.0 : texelFetch(uQ, me, 0).r + (lost + flow * uKappa / uTk) * uDt;',
   '  p += v * uDt;',
   '  oPos = vec4(p, body);',
-  '  oVel = vec4(v, T);',
+  '  oVel = vec4(v, uTk * Q / ci);',   // w — the temperature this heat makes, in kelvins
   '  oAux = vec4(grav, nb);',
-  '  oQ = vec4(texelFetch(uQ, me, 0).r + lost * uDt, 0.0, 0.0, 0.0);',
+  '  oQ = vec4(Q, 0.0, 0.0, 0.0);',
   '}'
 ].join('\n');
 
@@ -933,7 +950,7 @@ var G_VS = [
   'out float vZc;',
   'out float vR;',
   'out float vNb;',
-  'out vec4 vMat;',        // rgb — material, a — heat
+  'out vec4 vMat;',        // rgb — material, a — temperature
   'void main() {',
   '  ivec2 tc = ivec2(gl_VertexID % uSize.x, gl_VertexID / uSize.x);',
   '  vec4 P = texelFetch(uPos, tc, 0);',
@@ -1017,7 +1034,7 @@ var SHADE_FS = [
   'uniform float uP22;',
   'uniform float uP32;',
   'out vec4 o;',
-  GLSL_HEAT,
+  GLSL_GLOW,
   'vec3 posAt(ivec2 c) {',
   '  float z = texelFetch(uDep, c, 0).r;',
   '  vec2 ndc = (vec2(c) + 0.5) / uRes * 2.0 - 1.0;',
@@ -1037,8 +1054,49 @@ var SHADE_FS = [
   '  vec4 m = texelFetch(uMat, me, 0);',
   '  float lit = 0.12 + 0.88 * max(0.0, dot(n, uSunEye));',
   '  lit *= 0.7 + 0.3 * n.z;',                       // the limb turns away
-  '  o = vec4(m.rgb * lit + heat(m.a) * (uGlow * 0.7), 1.0);',
+  '  float molten = smoothstep(1300.0, 2100.0, m.a);',                            // past the melting point the crust is gone: dark rock, lit by itself
+  '  vec3 alb = mix(m.rgb, m.rgb * 0.25 + vec3(0.05, 0.03, 0.02), molten);',
+  '  o = vec4(alb * lit + glow(m.a) * uGlow, 1.0);',
   '  gl_FragDepth = ((uP22 * (-z) + uP32) / z) * 0.5 + 0.5;',
+  '}'
+].join('\n');
+
+// 4. Bloom: what is brighter than white — the glow, the hottest sparks —
+//    taken at a quarter of the size and blurred twice over, a narrow halo
+//    and a wide one, then laid back over the picture.
+var BRIGHT_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'uniform sampler2D uHdr;',
+  'uniform vec2 uInvRes;',       // of the canvas
+  'uniform float uThr;',
+  'out vec4 o;',
+  'void main() {',
+  '  vec2 uv = gl_FragCoord.xy * 4.0 * uInvRes;',    // the middle of this texel's 4×4 block; four bilinear taps cover it
+  '  vec3 c = texture(uHdr, uv + vec2(-1.0, -1.0) * uInvRes).rgb + texture(uHdr, uv + vec2(1.0, -1.0) * uInvRes).rgb',
+  '         + texture(uHdr, uv + vec2(-1.0, 1.0) * uInvRes).rgb + texture(uHdr, uv + vec2(1.0, 1.0) * uInvRes).rgb;',
+  '  c *= 0.25;',
+  '  float l = max(c.r, max(c.g, c.b));',
+  '  o = vec4(c * (max(l - uThr, 0.0) / max(l, 1e-4)), 1.0);',
+  '}'
+].join('\n');
+var BLOOM_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'uniform sampler2D uSrc;',
+  'uniform vec2 uInvRes;',
+  'uniform vec2 uDir;',
+  'uniform float uStep;',        // tap spacing; the gaussian is two of them wide
+  'out vec4 o;',
+  'const float W[5] = float[5](0.204, 0.180, 0.124, 0.067, 0.028);',
+  'void main() {',
+  '  vec2 uv = gl_FragCoord.xy * uInvRes;',
+  '  vec3 c = texture(uSrc, uv).rgb * W[0];',
+  '  for (int i = 1; i < 5; i++) {',
+  '    vec2 d = uDir * (float(i) * uStep) * uInvRes;',
+  '    c += (texture(uSrc, uv + d).rgb + texture(uSrc, uv - d).rgb) * W[i];',
+  '  }',
+  '  o = vec4(c, 1.0);',
   '}'
 ].join('\n');
 
@@ -1046,12 +1104,16 @@ var TONE_FS = [
   '#version 300 es',
   'precision highp float;',
   'uniform sampler2D uHdr;',
+  'uniform sampler2D uBloom;',
+  'uniform vec2 uInvRes;',
+  'uniform float uBloomK;',
   'uniform float uExposure;',
   'uniform float uDbg;',
   'out vec4 o;',
   'void main() {',
   '  vec3 c = texelFetch(uHdr, ivec2(gl_FragCoord.xy), 0).rgb;',
   '  if (uDbg > 0.5) { o = vec4(vec3(fract(c.r * 4.0)) * step(0.001, c.r), 1.0); return; }',
+  '  c += texture(uBloom, gl_FragCoord.xy * uInvRes).rgb * uBloomK;',
   '  c = vec3(1.0) - exp(-c * uExposure);',
   '  c = pow(c, vec3(0.92));',
   '  float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);',
@@ -1108,7 +1170,7 @@ function freeTarget(t) {
 }
 
 var simProg, slotProg, depProg, coarseProg, monoProg, cellProg, rigidProg, diagProg, ppGatherProg, ppForceProg, permProg;
-var starProg, gProg, blurProg, shadeProg, toneProg, vao;
+var starProg, gProg, blurProg, shadeProg, brightProg, bloomProg, toneProg, vao;
 try {
   simProg = program(QUAD_VS, SIM_FS);
   slotProg = program(SLOT_VS, SLOT_FS);
@@ -1125,6 +1187,8 @@ try {
   gProg = program(G_VS, G_FS);
   blurProg = program(QUAD_VS, BLUR_FS);
   shadeProg = program(QUAD_VS, SHADE_FS);
+  brightProg = program(QUAD_VS, BRIGHT_FS);
+  bloomProg = program(QUAD_VS, BLOOM_FS);
   toneProg = program(QUAD_VS, TONE_FS);
 } catch (e) {
   fail('The simulation shaders failed to compile on this GPU.<br>' + String(e.message || e).slice(0, 200));
@@ -1238,7 +1302,20 @@ function freeScreen(t) {
   gl.deleteTexture(t.mat); gl.deleteTexture(t.dep); gl.deleteFramebuffer(t.fbo);
   if (t.rb) gl.deleteRenderbuffer(t.rb);
 }
-var gbuf = null, blurA = null, blurB = null;
+// the bloom's pair, a quarter of the canvas each way, filtered so the taps
+// can fall between texels
+function bloomTarget(w, h) {
+  var t = { fbo: gl.createFramebuffer(), tex: floatTex(w, h, null, gl.RGBA16F, gl.HALF_FLOAT) };
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t.tex, 0);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('bloom framebuffer incomplete');
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return t;
+}
+var gbuf = null, blurA = null, blurB = null, bloomA = null, bloomB = null, bloomW = 0, bloomH = 0;
 var hdr = { fbo: gl.createFramebuffer(), tex: null, depth: gl.createRenderbuffer(), w: 0, h: 0 };
 function resize() {
   var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
@@ -1249,6 +1326,11 @@ function resize() {
   gbuf = screenTarget(w, h, true); blurA = screenTarget(w, h, false); blurB = screenTarget(w, h, false);
   if (hdr.tex) gl.deleteTexture(hdr.tex);
   hdr.tex = floatTex(w, h, null, gl.RGBA16F, gl.HALF_FLOAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);   // the bloom's bright pass reads it between texels
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  if (bloomA) { gl.deleteTexture(bloomA.tex); gl.deleteFramebuffer(bloomA.fbo); gl.deleteTexture(bloomB.tex); gl.deleteFramebuffer(bloomB.fbo); }
+  bloomW = Math.ceil(w / 4); bloomH = Math.ceil(h / 4);
+  bloomA = bloomTarget(bloomW, bloomH); bloomB = bloomTarget(bloomW, bloomH);
   gl.bindFramebuffer(gl.FRAMEBUFFER, hdr.fbo);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, hdr.tex, 0);
   gl.bindRenderbuffer(gl.RENDERBUFFER, hdr.depth);
@@ -1500,7 +1582,16 @@ function build() {
     mat: floatTex(W, H, matR, gl.R32F, gl.FLOAT, gl.RED), matR: matR,
     diag: floatTex(W, H, null), ref: null,
     t: 0, phase: 'settle', settleLeft: settle, settleTotal: settle, impactT: -1, com1: [0, 0, 0], stepNo: 0,
-    damp: Math.exp(-dt * 12), cool: Math.exp(-dt / 12), heatK: 0.7 / mref, soft: false, gen: ++gen
+    damp: Math.exp(-dt * 12), soft: false, gen: ++gen,
+    // the temperature a mantle particle's heat makes: each side of a contact
+    // books the pair's whole dissipation, so half of it is that side's
+    tK: 0.5 * E_KG / CP_ROCK / mref,
+    // touching particles share heat at this rate per neighbour — not
+    // conduction, which would do nothing in hours across 200 km of rock, but
+    // the mixing the impact does below the particle size: it evens out what
+    // one contact happened to book against the next within minutes and
+    // leaves the hemispheres to differ for the run
+    kappa: 0.3
   };
   sim.diagFbo = fboFor(sim.diag);
   if (!pbo) pbo = [gl.createBuffer(), gl.createBuffer()];
@@ -1572,8 +1663,9 @@ function setStaticUniforms() {
   gl.uniform1f(u.uC, sim.c);
   gl.uniform1f(u.uInvM, 1 / sim.m);
   gl.uniform1f(u.uDamp, sim.damp);
-  gl.uniform1f(u.uCool, sim.cool);
-  gl.uniform1f(u.uHeatK, sim.heatK);
+  gl.uniform1f(u.uTk, sim.tK);
+  gl.uniform1f(u.uKappa, sim.kappa);
+  gl.uniform1f(u.uCpIron, CP_IRON / CP_ROCK);
   gl.uniform3fv(u.uSpin0, sim.spin0); gl.uniform3fv(u.uSpin1, sim.spin1);
 
   u = rigidProg.u; gl.useProgram(rigidProg.p);
@@ -1746,7 +1838,7 @@ var MESH_EVERY = 8;
 function soften() {
   sim.soft = true;
   sim.k *= 0.5; sim.c *= Math.SQRT1_2; sim.dt *= Math.SQRT2;
-  sim.damp = Math.exp(-sim.dt * 12); sim.cool = Math.exp(-sim.dt / 12);
+  sim.damp = Math.exp(-sim.dt * 12);
   setStaticUniforms();
 }
 function step(settle, kick) {
@@ -2220,6 +2312,7 @@ function render() {
     gl.uniform2f(s.uRes, w, h);
     gl.uniform3fv(s.uSunEye, sunEye);
     gl.uniform1f(s.uGlow, S.glow);
+    gl.uniform1f(s.uGlowT, LOOK.glowT); gl.uniform1f(s.uWhite, LOOK.white);
     gl.uniform1f(s.uP22, proj[10]);
     gl.uniform1f(s.uP32, proj[14]);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -2242,12 +2335,36 @@ function render() {
   gl.disable(gl.BLEND);
   gl.disable(gl.DEPTH_TEST);
 
+  // 4. bloom: the bright part at a quarter size, a narrow blur then a wide one
+  gl.viewport(0, 0, bloomW, bloomH);
+  gl.useProgram(brightProg.p);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, bloomA.fbo);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, hdr.tex);
+  gl.uniform1i(brightProg.u.uHdr, 0);
+  gl.uniform2f(brightProg.u.uInvRes, 1 / w, 1 / h);
+  gl.uniform1f(brightProg.u.uThr, LOOK.bloomThr);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.useProgram(bloomProg.p);
+  gl.uniform1i(bloomProg.u.uSrc, 0);
+  gl.uniform2f(bloomProg.u.uInvRes, 1 / bloomW, 1 / bloomH);
+  var bp = [bloomA, bloomB];
+  for (var bpass = 0; bpass < 4; bpass++) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, bp[(bpass + 1) & 1].fbo);
+    gl.bindTexture(gl.TEXTURE_2D, bp[bpass & 1].tex);
+    gl.uniform2f(bloomProg.u.uDir, 1 - (bpass & 1), bpass & 1);
+    gl.uniform1f(bloomProg.u.uStep, bpass < 2 ? 1.5 : 3.0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, w, h);
   gl.useProgram(toneProg.p);
   var dbg = window.DBG | 0;
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, dbg === 1 ? gbuf.dep : dbg === 2 ? blurA.dep : dbg === 3 ? blurB.dep : hdr.tex);
-  gl.uniform1i(toneProg.u.uHdr, 0);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, bloomA.tex);
+  gl.uniform1i(toneProg.u.uHdr, 0); gl.uniform1i(toneProg.u.uBloom, 1);
+  gl.uniform2f(toneProg.u.uInvRes, 1 / w, 1 / h);
+  gl.uniform1f(toneProg.u.uBloomK, LOOK.bloomK);
   gl.uniform1f(toneProg.u.uDbg, dbg ? 1 : 0);
   gl.uniform1f(toneProg.u.uExposure, S.exposure);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -2293,7 +2410,7 @@ function hud() {
     var ref = sim.ref, E = report.KE + report.PE + report.EL;
     var sgn = function (x, d) { var s = Math.abs(x).toFixed(d); return (parseFloat(s) === 0 ? '' : x < 0 ? '\u2212' : '+') + s; };
     lines.push('<b>momentum</b> drift ' + (report.drift * V_UNIT * 1000).toFixed(1) + ' m/s <i>· L ' + (report.L / L_EM).toFixed(2) + ' L<sub>EM</sub>' + (ref ? ' ' + sgn((report.L - ref.L) / ref.L * 100, 2) + ' %' : '') + '</i>');
-    lines.push('<b>energy</b> ' + sgn(E, 3) + ' <i>· heat ' + report.Q.toFixed(3) + (ref ? ' · balance ' + sgn((E + report.Q - ref.EQ) / Math.abs(ref.E) * 100, 2) + ' %' : '') + '</i>');
+    lines.push('<b>energy</b> ' + sgn(E, 3) + ' <i>· heat ' + report.Q.toFixed(3) + ' ≈ ' + Math.round(report.Q / report.M * E_KG / CP_ROCK / 100) * 100 + ' K' + (ref ? ' · balance ' + sgn((E + report.Q - ref.EQ) / Math.abs(ref.E) * 100, 2) + ' %' : '') + '</i>');
     lines.push('<b>cells</b> ' + (report.unseated * 100).toFixed(2) + ' % unseated <i>· ' + (report.full * 100).toFixed(1) + ' % in full cells · pairs ' + fmtCount(report.pp.list.length) + (report.pp.loose > report.pp.list.length ? ' of ' + fmtCount(report.pp.loose) : '') + '</i>');
     rep.innerHTML = lines.join('\n');
     rep.hidden = false;
@@ -2401,6 +2518,21 @@ window.__impact = {
   set asyncRead(v) { asyncRead = !!v; },
   get state() { return { analyzing: analyzing, pending: !!pending, worker: !!worker, analyses: analyses, analyzedAt: analyzedAt, stepNo: sim && sim.stepNo, waitStatus: pending ? gl.clientWaitSync(pending.sync, 0, 0) : null }; },
   sortNow: function () { analyses = 0; analyze(true); return report; },
+  get look() { return LOOK; },
+  temps: function () {
+    var fbo = gl.createFramebuffer(), buf = new Float32Array(sim.W * sim.H * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, sim.src.vel, 0);
+    gl.readPixels(0, 0, sim.W, sim.H, gl.RGBA, gl.FLOAT, buf);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.deleteFramebuffer(fbo);
+    var T = new Float32Array(sim.N);
+    for (var i = 0; i < sim.N; i++) T[i] = buf[i * 4 + 3];
+    T.sort();
+    var at = function (p) { return Math.round(T[Math.floor(p * (sim.N - 1))]); };
+    var out = { min: at(0), p10: at(0.1), p50: at(0.5), p90: at(0.9), p95: at(0.95), p99: at(0.99), max: at(1) };
+    [2000, 5000, 10000, 20000].forEach(function (k) { var n = 0; for (var i = 0; i < sim.N; i++) if (T[i] > k) n++; out['above' + k] = +(n / sim.N).toFixed(3); });
+    return out;
+  },
   // the mesh's own books: the net force and torque its cells exert on each
   // other, which should be nothing — as fractions of the sum of their sizes
   meshCheck: function () {

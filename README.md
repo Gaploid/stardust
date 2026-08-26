@@ -37,8 +37,13 @@ simulation. Two planets of real mass — a proto-Earth and an impactor you size
 from 0.02 to 1 M⊕ — approach under their own gravity and collide. They are
 made of 16k to 262k body-particles that all pull on each other; touching
 particles push back like a stiff spring and bleed energy into heat, so the
-material stays incompressible, splashes, glows where it was hit, and clumps
-back together. Both bodies are differentiated: an iron core carrying a third
+material stays incompressible, splashes, and clumps back together. The heat
+stays in the material — it spreads by contact from particle to particle, and
+nothing radiates it away in hours — so every particle has a temperature and
+the rock glows by it: deep red past 900 K, orange by 5000, white past
+40 000. A day after the canonical impact the planet is a magma ocean at
+3000 K, the impactor's material at ten thousand, the far side barely warm;
+the sparks off the first contact come away white. Both bodies are differentiated: an iron core carrying a third
 of the mass at two and a half times the mantle's density (Earth's numbers),
 a mantle, and a crust; the impactor has a Mars-like density. Density is mass
 — every particle has the same size, the core's weigh 2.5× — so cores sink
@@ -60,9 +65,10 @@ A **moon** line says what Moon the disk in orbit would make, by Ida, Canup
 momentum: the months the sim cannot run, in one number). Under those, the
 books: the barycentre's drift, the angular momentum in units of today's
 Earth–Moon system and how much of it the run has kept, the mechanical
-energy, the heat the contacts have made, and whether the two add up to what
-they were at the start — plus how the contact cells are doing and how much
-of the loose material the pairwise pass is holding.
+energy, the heat the contacts have made and the mean temperature it makes,
+and whether the two add up to what they were at the start — plus how the
+contact cells are doing and how much of the loose material the pairwise pass
+is holding.
 *Advanced* has the mass ratio, the angle, the speed in units of escape
 velocity, each body's spin as a fraction of its breakup rate (shown as the
 day it makes; none, retrograde, or up to Ćuk & Stewart's 2.6-hour Earth),
@@ -186,14 +192,20 @@ impulse for the eight steps it stands for: held for those steps instead it
 lags, and a turning body feeling its own field a little behind it is braked
 by it like by a tide — 0.4 % of the angular momentum in six time units,
 which the books caught; as an impulse it keeps L to 0.01 % over nine hours.
-The energy line's balance is what the step itself eats — the dashpot's work
-is booked with the velocity before the kick — about a fifth of the heat at
-this step size.
+The energy line's balance is what the step itself eats or makes — the
+dashpot's work is booked with the velocity before the kick — within a
+percent over a day. (It read −2.8 % until the heat became a temperature and
+was looked at per particle: a barely-loaded contact, every contact in a body
+at rest, was booking its spring's work as heat with either sign.)
 
 The picture is three screen-space passes borrowed from fluid rendering:
 sphere impostors with per-fragment depth, a bilateral blur two particles wide
 that melts them into a skin without crossing a silhouette, and normals from
-the smoothed depth, lit by one sun. A friends-of-friends pass in a worker
+the smoothed depth, lit by one sun. Hot rock adds its own light by its
+temperature: a Planckian ramp whose brightness levels off, so that the
+40 000 K sparks off the contact and the 1000 K far side both read; what
+comes out brighter than white blooms, a narrow halo and a wide one at a
+quarter of the size. A friends-of-friends pass in a worker
 reads the positions back every second or so — through pack buffers and a
 fence, so the frame never waits on the GPU for it — to tell the planet from
 its disk and to keep the books.
@@ -202,6 +214,13 @@ its disk and to keep the books.
 
 Broad strokes, newest first; the commit history tells each one in full.
 
+- **2026-08-26 — Heat.** The heat the contacts make stays in the material
+  and spreads by contact; every particle has a temperature and the rock glows
+  by it — the planet a magma ocean at 3000 K a day after the canonical
+  impact, the far side cold, the sparks off the contact white — and the
+  readout says the mean. Bloom on what is brighter than white. On the way:
+  the books were booking a barely-loaded contact's spring work as heat with
+  either sign; the balance goes from −2.8 % to under a percent.
 - **2026-08-26 — Faster.** A step at 131k from 2.5 ms to 1.4, and 4× runs at
   30 fps instead of 19: empty mesh blocks skipped, the mesh every eighth
   step, the particles kept in spatial order, the analysis read back without
