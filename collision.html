@@ -242,6 +242,10 @@ var gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: fa
 function fail(msg) { var f = $('fallback'); f.innerHTML = msg; f.style.display = 'flex'; }
 if (!gl) { fail('WebGL 2 is not available in this browser —<br>the simulation cannot run.'); return; }
 if (!gl.getExtension('EXT_color_buffer_float')) { fail('This GPU cannot render to float textures —<br>the simulation cannot run.'); return; }
+// the mesh deposit adds hundreds of contributions into a cell by blending: in
+// half floats the small ones are lost once the sum passes a thousand (2 % of
+// the mass, measured), so it blends in full floats where the GPU allows
+var floatBlend = !!gl.getExtension('EXT_float_blend');
 
 // ---------- units ----------
 // G = 1, Earth mass = 1, Earth radius = 1. Then the time unit is √(R³/GM) = 805 s
@@ -685,6 +689,38 @@ var RIGID_FS = [
   '}'
 ].join('\n');
 
+// Putting the particles in spatial order. The lattice is built inside-out,
+// and the impact scrambles that; the contact loop then reaches for its
+// neighbours' positions all over the texture. Every so often the analysis
+// hands back a Morton order of where everything is now, and this pass
+// rewrites every per-particle texture in it — a relabelling, nothing else,
+// so the physics is the same and the neighbours are next to each other.
+var PERM_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp int;',
+  'precision highp sampler2D;',
+  'uniform sampler2D uPos;',
+  'uniform sampler2D uVel;',
+  'uniform sampler2D uAux;',
+  'uniform sampler2D uQ;',
+  'uniform sampler2D uPerm;',       // r — which particle goes here
+  'uniform ivec2 uSize;',
+  'layout(location = 0) out vec4 oPos;',
+  'layout(location = 1) out vec4 oVel;',
+  'layout(location = 2) out vec4 oAux;',
+  'layout(location = 3) out vec4 oQ;',
+  'void main() {',
+  '  ivec2 me = ivec2(gl_FragCoord.xy);',
+  '  int s = int(texelFetch(uPerm, me, 0).r);',
+  '  ivec2 t = ivec2(s % uSize.x, s / uSize.x);',
+  '  oPos = texelFetch(uPos, t, 0);',
+  '  oVel = texelFetch(uVel, t, 0);',
+  '  oAux = texelFetch(uAux, t, 0);',
+  '  oQ = texelFetch(uQ, t, 0);',
+  '}'
+].join('\n');
+
 // Read-outs for the books, run only when the analysis runs: the mesh
 // potential at the particle (the monopole's, off the mesh), whether it got a
 // seat in its contact cell and how many seats that cell has taken, and the
@@ -1071,7 +1107,7 @@ function freeTarget(t) {
   gl.deleteTexture(t.pos); gl.deleteTexture(t.vel); gl.deleteTexture(t.aux); gl.deleteTexture(t.q); gl.deleteFramebuffer(t.fbo);
 }
 
-var simProg, slotProg, depProg, coarseProg, monoProg, cellProg, rigidProg, diagProg, ppGatherProg, ppForceProg;
+var simProg, slotProg, depProg, coarseProg, monoProg, cellProg, rigidProg, diagProg, ppGatherProg, ppForceProg, permProg;
 var starProg, gProg, blurProg, shadeProg, toneProg, vao;
 try {
   simProg = program(QUAD_VS, SIM_FS);
@@ -1084,6 +1120,7 @@ try {
   diagProg = program(QUAD_VS, DIAG_FS);
   ppGatherProg = program(QUAD_VS, PPGATHER_FS);
   ppForceProg = program(QUAD_VS, PPFORCE_FS);
+  permProg = program(QUAD_VS, PERM_FS);
   starProg = program(STAR_VS, STAR_FS);
   gProg = program(G_VS, G_FS);
   blurProg = program(QUAD_VS, BLUR_FS);
@@ -1142,7 +1179,7 @@ function fboFor(tex, depthRb) {
 }
 var dummy = floatTex(1, 1, new Float32Array([-1, 0, 0, 0]));   // "no particle", for slot samplers not yet filled
 var pm = {
-  fine: floatTex(512, 513, null, gl.RGBA16F, gl.HALF_FLOAT),   // 64³: Σ w·xyz, Σ w — blendable; a scratch row below
+  fine: floatTex(512, 513, null, floatBlend ? gl.RGBA32F : gl.RGBA16F, floatBlend ? gl.FLOAT : gl.HALF_FLOAT),   // 64³: Σ w·xyz, Σ w — blendable; a scratch row below
   coarse: floatTex(64, 64, null),                              // 16³
   mono: floatTex(1, 1, null),
   force: floatTex(512, 513, null)                              // acceleration and potential at every fine cell; the scratch row copied
@@ -1451,7 +1488,7 @@ function build() {
   var lnE = Math.log(S.rest), zeta = -lnE / Math.sqrt(Math.PI * Math.PI + lnE * lnE);
   var cd = 2 * zeta * Math.sqrt(k * mref / 2);
 
-  if (sim) { freeTarget(sim.src); freeTarget(sim.dst); gl.deleteTexture(sim.mat); gl.deleteTexture(sim.diag); gl.deleteFramebuffer(sim.diagFbo); }
+  if (sim) { freeTarget(sim.src); freeTarget(sim.dst); gl.deleteTexture(sim.mat); gl.deleteTexture(sim.diag); gl.deleteFramebuffer(sim.diagFbo); gl.deleteTexture(sim.perm); }
   var G = N >= 65536 ? 128 : 64;
   if (!grid || grid.G !== G) { freeGrid(grid); grid = makeGrid(G); }
   var settle = Math.ceil(0.3 / dt);
@@ -1466,6 +1503,8 @@ function build() {
     damp: Math.exp(-dt * 12), cool: Math.exp(-dt / 12), heatK: 0.7 / mref, gen: ++gen
   };
   sim.diagFbo = fboFor(sim.diag);
+  if (sim.perm) gl.deleteTexture(sim.perm);
+  sim.perm = floatTex(W, H, null, gl.R32F, gl.FLOAT, gl.RED);
   if (pp.slot) gl.deleteTexture(pp.slot);
   pp.slotArr = new Float32Array(N).fill(-1);
   pp.slot = floatTex(W, H, pp.slotArr, gl.R32F, gl.FLOAT, gl.RED);
@@ -1552,6 +1591,9 @@ function setStaticUniforms() {
 
   u = ppGatherProg.u; gl.useProgram(ppGatherProg.p);
   gl.uniform1i(u.uPos, 0); gl.uniform1i(u.uMat, 1); gl.uniform1i(u.uIndex, 2);
+  gl.uniform2i(u.uSize, sim.W, sim.H);
+  u = permProg.u; gl.useProgram(permProg.p);
+  gl.uniform1i(u.uPos, 0); gl.uniform1i(u.uVel, 1); gl.uniform1i(u.uAux, 2); gl.uniform1i(u.uQ, 3); gl.uniform1i(u.uPerm, 4);
   gl.uniform2i(u.uSize, sim.W, sim.H);
   u = ppForceProg.u; gl.useProgram(ppForceProg.p);
   gl.uniform1i(u.uList, 0);
@@ -1767,7 +1809,7 @@ function rigidStep(dtF) {
 // the read-outs in, the report out. Counting sort into hashed cells, then
 // union-find. Layer and body ride in P.w: layer + 4·body, layer 0 being core.
 // The books come along: mass, momentum, angular momentum, the energies.
-function fof(N, mref, a, P, V, R, D, spring, touch, cap) {
+function fof(N, mref, a, P, V, R, D, spring, touch, cap, sort) {
   var L = 2.4 * a, L2 = L * L, inv = 1 / L, touch2 = touch * touch, elastic = 0;
   var T = 1 << 20, TM = T - 1;
   var cx = new Int32Array(N), cy = new Int32Array(N), cz = new Int32Array(N), key = new Int32Array(N);
@@ -1903,17 +1945,34 @@ function fof(N, mref, a, P, V, R, D, spring, touch, cap) {
   }
   var list = new Float32Array(Math.min(nLoose, cap));
   for (i = 0; i < N && wr < list.length; i++) if (loose(i) && far2(A, i) >= least) list[wr++] = i;
+  // the spatial order, when asked: a Morton key of 7 bits an axis over the
+  // mesh's box, a counting sort on it; perm says which particle goes where,
+  // and the loose list is spoken in the new names
+  var perm = null;
+  if (sort) {
+    var KB = 1 << 21, keys = new Int32Array(N), bins = new Int32Array(KB + 1), into = new Int32Array(N);
+    perm = new Float32Array(N);
+    for (i = 0; i < N; i++) {
+      var mx = Math.min(127, Math.max(0, Math.floor((P[i * 4] + 6) / 12 * 128))), my = Math.min(127, Math.max(0, Math.floor((P[i * 4 + 1] + 6) / 12 * 128))), mz = Math.min(127, Math.max(0, Math.floor((P[i * 4 + 2] + 6) / 12 * 128)));
+      var mk = 0;
+      for (k = 0; k < 7; k++) mk |= ((mx >> k) & 1) << (3 * k) | ((my >> k) & 1) << (3 * k + 1) | ((mz >> k) & 1) << (3 * k + 2);
+      keys[i] = mk; bins[mk + 1]++;
+    }
+    for (k = 0; k < KB; k++) bins[k + 1] += bins[k];
+    for (i = 0; i < N; i++) { var dst = bins[keys[i]]++; perm[dst] = i; into[i] = dst; }
+    for (i = 0; i < list.length; i++) list[i] = into[list[i]];
+  }
   return { largest: A.mass, largestImp: A.imp, largestIron: A.iron, day: day, orbit: orbit, escape: esc, second: second, com: A.com,
            M: Mt, drift: Math.sqrt(px * px + py * py + pz * pz) / Mt, L: Math.sqrt(Jx * Jx + Jy * Jy + Jz * Jz),
            KE: ke, PE: pe, EL: elastic, Q: Q, unseated: unseated / N, full: full / N,
-           pp: { list: list, loose: nLoose }, jD: jD, moon: moon };
+           pp: { list: list, loose: nLoose }, jD: jD, moon: moon, perm: perm };
 }
 
 // the analysis runs in a worker when it can (a quarter million bodies take
 // tens of milliseconds); the buffers go back and forth without copying
-var worker = null, analyzing = false, diagBuf = null, analyzedAt = 0;
+var worker = null, analyzing = false, diagBuf = null, analyzedAt = 0, analyses = 0;
 try {
-  var src = fof.toString() + '\nself.onmessage = function (e) { var d = e.data; var r = fof(d.N, d.m, d.a, d.P, d.V, d.R, d.D, d.k, d.touch, d.cap); self.postMessage({ gen: d.gen, r: r, P: d.P, V: d.V, D: d.D }, [d.P.buffer, d.V.buffer, d.D.buffer, r.pp.list.buffer]); };';
+  var src = fof.toString() + '\nself.onmessage = function (e) { var d = e.data; var r = fof(d.N, d.m, d.a, d.P, d.V, d.R, d.D, d.k, d.touch, d.cap, d.sort); var tr = [d.P.buffer, d.V.buffer, d.D.buffer, r.pp.list.buffer]; if (r.perm) tr.push(r.perm.buffer); self.postMessage({ gen: d.gen, r: r, P: d.P, V: d.V, D: d.D }, tr); };';
   worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
   worker.onmessage = function (e) {
     analyzing = false;
@@ -1925,7 +1984,30 @@ try {
 function applyReport(r) {
   report = r; sim.com1 = r.com;
   if (!sim.ref) sim.ref = { E: r.KE + r.PE + r.EL, EQ: r.KE + r.PE + r.EL + r.Q, L: r.L };   // the books at the first look, settled and on approach
+  if (r.perm) applyPerm(r.perm);
   setPP(r.pp);
+}
+// the particles rewritten in the order handed back: the four state textures
+// by the permute pass, the masses on the CPU and back up, then fresh contact
+// cells — the old ones name particles by their old places
+function applyPerm(perm) {
+  var N = sim.N, i, R = new Float32Array(N), old = sim.matR;
+  for (i = 0; i < N; i++) R[i] = old[perm[i]];
+  sim.matR = R;
+  gl.bindTexture(gl.TEXTURE_2D, sim.mat); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, sim.W, sim.H, gl.RED, gl.FLOAT, R);
+  gl.bindTexture(gl.TEXTURE_2D, sim.perm); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, sim.W, sim.H, gl.RED, gl.FLOAT, perm);
+  gl.useProgram(permProg.p);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, sim.dst.fbo);
+  gl.viewport(0, 0, sim.W, sim.H);
+  gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sim.src.pos);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, sim.src.vel);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, sim.src.aux);
+  gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, sim.src.q);
+  gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, sim.perm);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  var t = sim.src; sim.src = sim.dst; sim.dst = t;
+  passSlots();
 }
 // the loose list onto the GPU — a seat per particle, the particle per seat —
 // and the correction for it right away, so no seat waits on the next mesh step
@@ -1943,6 +2025,7 @@ function analyze(sync) {
   if (analyzing && !sync) return;
   if (sync) sim.gen = ++gen;   // whatever the worker is still computing is for the state before this call: drop it
   analyzedAt = sim.stepNo;
+  var sort = sim.phase === 'full' && analyses++ % 8 === 0;   // every eighth look, the particles are put in spatial order
   var N = sim.N;
   var P = (!sync && posBuf && posBuf.length === N * 4) ? posBuf : new Float32Array(N * 4);
   var V = (!sync && velBuf && velBuf.length === N * 4) ? velBuf : new Float32Array(N * 4);
@@ -1957,9 +2040,9 @@ function analyze(sync) {
     analyzing = true;
     posBuf = null; velBuf = null; diagBuf = null;
     var R = sim.matR.slice();
-    worker.postMessage({ gen: sim.gen, N: N, m: sim.m, a: sim.a, P: P, V: V, R: R, D: D, k: sim.k, touch: 2 * sim.a, cap: PP_CAP }, [P.buffer, V.buffer, R.buffer, D.buffer]);
+    worker.postMessage({ gen: sim.gen, N: N, m: sim.m, a: sim.a, P: P, V: V, R: R, D: D, k: sim.k, touch: 2 * sim.a, cap: PP_CAP, sort: sort }, [P.buffer, V.buffer, R.buffer, D.buffer]);
   } else {
-    applyReport(fof(N, sim.m, sim.a, P, V, sim.matR, D, sim.k, 2 * sim.a, PP_CAP));
+    applyReport(fof(N, sim.m, sim.a, P, V, sim.matR, D, sim.k, 2 * sim.a, PP_CAP, sort));
   }
 }
 
@@ -2260,6 +2343,7 @@ window.__impact = {
   get sim() { return sim; },
   get report() { return report; },
   set meshEvery(n) { MESH_EVERY = n; },
+  sortNow: function () { analyses = 0; analyze(true); return report; },
   // the mesh's own books: the net force and torque its cells exert on each
   // other, which should be nothing — as fractions of the sum of their sizes
   meshCheck: function () {
