@@ -28,13 +28,13 @@ Saturn, the Sun, or a cube — and you can stir them with your cursor.
 
 Drag rotates · Space scatters · wheel zooms.
 
-## Impact
+## Real physics
 
-The impact simulation — two planets of real mass colliding under their own
-gravity, from the canonical Moon-forming impact to a hit-and-run — grew into a
-project of its own and moved out on 2026-08-26:
+The particles here are an animation: they look like a planet, they do not pull
+on each other. The simulation that does — two planets of real mass colliding
+under their own gravity — is its own project now:
 **[Cosmic Collisions](https://github.com/Gaploid/cosmic-collisions)**, live at
-https://gaploid.github.io/cosmic-collisions/.
+https://gaploid.github.io/cosmic-collisions/
 
 ## Data sources
 
@@ -98,9 +98,9 @@ brightness (10M points is 333 MB of VRAM, so it is opt-in).
 
 Broad strokes, newest first; the commit history tells each one in full.
 
-- **2026-08-26 — Impact moves out.** The second page became a project of its
-  own and left for [Cosmic Collisions](https://github.com/Gaploid/cosmic-collisions),
-  with its history; what stays here is the animation.
+- **2026-08-26 — Impact moves out.** The second page left for
+  [Cosmic Collisions](https://github.com/Gaploid/cosmic-collisions); what stays
+  here is the animation.
 - **2026-08-25 — A brighter sky.** The catalogue stars get a steeper magnitude
   curve and glows on the bright few, on by default.
 - **2026-08-25 — Mars, with Phobos and Deimos.** The Viking colour mosaic over
