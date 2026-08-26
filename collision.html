@@ -277,7 +277,19 @@ var S = { q: 0.1, angle: 45, vfac: 1.05, spin0: 0.18, spin1: 0.20, nIdx: 3, rest
 var COL_TARGET = [0.40, 0.58, 0.90], COL_IMPACTOR = [0.96, 0.55, 0.28];
 // the look of the heat: the glow's brightness scale and white point in K,
 // what blooms (brighter than this), and how much of the halo is laid back
-var LOOK = { glowT: 12000, white: 40000, bloomThr: 1.0, bloomK: 0.3 };
+var LOOK = { glowT: 12000, white: 40000, bloomThr: 1.0, bloomK: 0.3, magma: 20, reach: 2.0 };
+var lastLights = null;
+// magma: the hot bodies' light on what is next to them, in their own
+// brightness — the real figure is a hundred, a 3000 K surface outshines the
+// sun that much at these distances, but the glow is compressed for the eye
+// and its light with it; reach: in radii, how far it carries before the
+// inverse square takes over
+// the glow's colour and brightness, the same curve as GLSL_GLOW
+function glowCol(T) {
+  var c = function (x) { return Math.min(1, Math.max(0, x)); };
+  var k = 2.5 * (1 - Math.exp(-Math.pow(Math.max(T - 800, 0) / LOOK.glowT, 1.3)));
+  return [k, k * Math.pow(c((T - 950) / (LOOK.white - 950)), 0.6), k * Math.pow(c((T - 1900) / (LOOK.white - 1900)), 2.0)];
+}
 var FOV = 38 * Math.PI / 180;
 
 // ---------- shaders ----------
@@ -1027,37 +1039,90 @@ var SHADE_FS = [
   'precision highp sampler2D;',
   'uniform sampler2D uMat;',
   'uniform sampler2D uDep;',
+  'uniform sampler2D uDepRaw;',  // the depth before the blur: the particles themselves
   'uniform vec2 uInvP;',        // 1/P00, 1/P11
   'uniform vec2 uRes;',
   'uniform vec3 uSunEye;',
   'uniform float uGlow;',
   'uniform float uP22;',
   'uniform float uP32;',
+  'uniform int uNL;',           // the hot bodies as lights, up to two:
+  'uniform vec3 uLPos[2];',     // where, in eye space
+  'uniform vec3 uLCol[2];',     // the light at their surface
+  'uniform float uLR2[2];',     // their radius²
+  'uniform float uReach2;',     // the fall-off, 1/(d²/R² + reach²): inverse-square far off, kept from blowing up close in
+  'uniform float uDbg;',        // LOOK.dbg: 1 the ember alone, 2 the particle normal, 3 the direction to the first light, 4 the skin normal
+  'uniform int uNO;',           // what casts shadows in that light, as balls: the planet, the impactor while it is one, the second body
+  'uniform vec4 uOcc[3];',      // centre in eye space, radius
   'out vec4 o;',
   GLSL_GLOW,
-  'vec3 posAt(ivec2 c) {',
-  '  float z = texelFetch(uDep, c, 0).r;',
+  // how much of the light at L, a ball of radius R, reaches p: the run from
+  // p to the ball's surface against each occluder — the light's own ball
+  // aside, and a ball behind p (away from the light) aside — with a soft edge
+  'float shadow(vec3 p, vec3 L, float R) {',
+  '  vec3 toL = L - p;',
+  '  float len = length(toL), lit = 1.0;',
+  '  vec3 dir = toL / max(len, 1e-6);',
+  '  float seg = max(len - R, 0.0);',
+  '  for (int i = 0; i < 3; i++) if (i < uNO) {',
+  '    vec3 C = uOcc[i].xyz; float r = uOcc[i].w;',
+  '    float along = dot(C - p, dir);',
+  '    if (distance(C, L) < r || along <= 0.0) continue;',
+  '    lit *= smoothstep(0.85 * r, 1.05 * r, distance(p + dir * min(along, seg), C));',
+  '  }',
+  '  return lit;',
+  '}',
+  'vec3 posAt(sampler2D dep, ivec2 c) {',
+  '  float z = texelFetch(dep, c, 0).r;',
   '  vec2 ndc = (vec2(c) + 0.5) / uRes * 2.0 - 1.0;',
   '  return vec3(ndc * uInvP * z, -z);',
+  '}',
+  // the normal from the neighbours on the same surface — in front of the
+  // camera z is negative, the background reads 0, and a jump of more than
+  // six pixels' worth of depth is a step down to whatever is behind, not a
+  // slope — the nearer of the two a side when both are. On a silhouette,
+  // with no neighbour to take a slope from on some axis, the normal points
+  // outward along the screen: lit by the sun from that side, never toward
+  // the body it belongs to
+  'vec3 normalAt(sampler2D dep, ivec2 me, vec3 p, out bool edge) {',
+  '  vec3 pr = posAt(dep, me + ivec2(1, 0)), pl = posAt(dep, me - ivec2(1, 0)), pu = posAt(dep, me + ivec2(0, 1)), pd = posAt(dep, me - ivec2(0, 1));',
+  '  float jump = -p.z * 12.0 * uInvP.x / uRes.x;',
+  '  bool hr = pr.z < 0.0 && abs(pr.z - p.z) < jump, hl = pl.z < 0.0 && abs(pl.z - p.z) < jump;',
+  '  bool hu = pu.z < 0.0 && abs(pu.z - p.z) < jump, hd = pd.z < 0.0 && abs(pd.z - p.z) < jump;',
+  '  vec3 r = pr - p, l = p - pl, u = pu - p, d = p - pd;',
+  '  vec3 dx = hr && hl ? (abs(r.z) < abs(l.z) ? r : l) : hr ? r : l;',
+  '  vec3 dy = hu && hd ? (abs(u.z) < abs(d.z) ? u : d) : hu ? u : d;',
+  '  edge = !(hr || hl) || !(hu || hd);',
+  '  vec3 n = edge ? normalize(vec3(float(!hr) - float(!hl), float(!hu) - float(!hd), 0.3)) : normalize(cross(dx, dy));',
+  '  return n.z < 0.0 ? -n : n;',
   '}',
   'void main() {',
   '  ivec2 me = ivec2(gl_FragCoord.xy);',
   '  float z = texelFetch(uDep, me, 0).r;',
   '  if (z <= 0.0) discard;',
-  '  vec3 p = posAt(me);',
-  '  vec3 r = posAt(me + ivec2(1, 0)) - p, l = p - posAt(me - ivec2(1, 0));',
-  '  vec3 u = posAt(me + ivec2(0, 1)) - p, d = p - posAt(me - ivec2(0, 1));',
-  '  vec3 dx = abs(r.z) < abs(l.z) ? r : l;',
-  '  vec3 dy = abs(u.z) < abs(d.z) ? u : d;',
-  '  vec3 n = normalize(cross(dx, dy));',
-  '  if (n.z < 0.0) n = -n;',
+  '  vec3 p = posAt(uDep, me);',
+  '  bool edge, edgeR;',
+  '  vec3 n = normalAt(uDep, me, p, edge);',                            // the skin's
+  '  vec3 nR = normalAt(uDepRaw, me, posAt(uDepRaw, me), edgeR);',      // the particle's own: honest at a silhouette, where the smoothed skin's turns any way
   '  vec4 m = texelFetch(uMat, me, 0);',
   '  float lit = 0.12 + 0.88 * max(0.0, dot(n, uSunEye));',
   '  lit *= 0.7 + 0.3 * n.z;',                       // the limb turns away
   '  float molten = smoothstep(1300.0, 2100.0, m.a);',                            // past the melting point the crust is gone: dark rock, lit by itself
   '  vec3 alb = mix(m.rgb, m.rgb * 0.25 + vec3(0.05, 0.03, 0.02), molten);',
-  '  o = vec4(alb * lit + glow(m.a) * uGlow, 1.0);',
+  // the hot bodies' light on everything else — the disk in the planet's
+  // glow — by the skin's normal or the particle's, whichever faces the light
+  // less: along a silhouette the smoothed skin's normal is noise, and this
+  // light is twenty times the sun's, so the noise would be a bright rim
+  '  vec3 ember = vec3(0.0);',
+  '  for (int i = 0; i < 2; i++) if (i < uNL && !edge && !edgeR) {',
+  '    vec3 l = uLPos[i] - p;',
+  '    float d2 = dot(l, l) / uLR2[i];',
+  '    vec3 lh = normalize(l);',
+  '    ember += uLCol[i] * min(max(0.0, dot(n, lh)), max(0.0, dot(nR, lh))) / (d2 + uReach2) * smoothstep(1.0, 2.0, d2) * shadow(p, uLPos[i], sqrt(uLR2[i]));',   // and not the body's own skin: convex, it cannot light itself
+  '  }',
   '  gl_FragDepth = ((uP22 * (-z) + uP32) / z) * 0.5 + 0.5;',
+  '  if (uDbg > 0.5) { vec3 lh0 = normalize(uLPos[0] - p); o = vec4(uDbg < 1.5 ? ember : uDbg < 2.5 ? nR * 0.5 + 0.5 : uDbg < 3.5 ? lh0 * 0.5 + 0.5 : n * 0.5 + 0.5, 1.0); return; }',
+  '  o = vec4(alb * (lit + ember) + glow(m.a) * uGlow, 1.0);',
   '}'
 ].join('\n');
 
@@ -1959,16 +2024,30 @@ function fof(N, mref, a, P, V, R, D, spring, touch, cap, sort) {
     else if (g2 < 0 || size[i] > size[g2]) g2 = i;
   }
   function stats(root) {
-    var n = 0, mass = 0, x = 0, y = 0, z = 0, vx = 0, vy = 0, vz = 0, imp = 0, iron = 0;
+    var n = 0, mass = 0, x = 0, y = 0, z = 0, vx = 0, vy = 0, vz = 0, imp = 0, iron = 0, ix = 0, iy = 0, iz = 0;
     for (var t = 0; t < N; t++) if (find(t) === root) {
       var m = mref * R[t], w = P[t * 4 + 3];
       n++; mass += m;
       x += m * P[t * 4]; y += m * P[t * 4 + 1]; z += m * P[t * 4 + 2];
       vx += m * V[t * 4]; vy += m * V[t * 4 + 1]; vz += m * V[t * 4 + 2];
-      if (w >= 3.5) imp += m;
+      if (w >= 3.5) { imp += m; ix += m * P[t * 4]; iy += m * P[t * 4 + 1]; iz += m * P[t * 4 + 2]; }
       if (w - 4 * Math.floor(w / 4) < 0.5) iron += m;
     }
-    return { n: n, mass: mass, com: [x / mass, y / mass, z / mass], vel: [vx / mass, vy / mass, vz / mass], imp: imp / mass, iron: iron / mass, R: Math.cbrt(mass) };
+    // the surface temperature the body shines with, and lights the others
+    // by: over the outer fifth of the radius, weighted by T² — the light is
+    // the hot patches', not the average's — with the vapour's tens of
+    // thousands of kelvin capped where the glow saturates anyway
+    // and the impactor's material in the group: where it is and how spread
+    // — a ball still, in the first hour, that shadows the planet's light
+    var gx = x / mass, gy = y / mass, gz = z / mass, Rg = Math.cbrt(mass), shell = 0.64 * Rg * Rg, Ts = 0, ws = 0;
+    var icx = imp > 0 ? ix / imp : 0, icy = imp > 0 ? iy / imp : 0, icz = imp > 0 ? iz / imp : 0, irms = 0;
+    for (t = 0; t < N; t++) if (find(t) === root) {
+      var sx = P[t * 4] - gx, sy = P[t * 4 + 1] - gy, sz = P[t * 4 + 2] - gz;
+      if (sx * sx + sy * sy + sz * sz > shell) { var Tt = Math.min(V[t * 4 + 3], 12000), wt = Tt * Tt; Ts += wt * Tt; ws += wt; }
+      if (P[t * 4 + 3] >= 3.5) { var ex = P[t * 4] - icx, ey = P[t * 4 + 1] - icy, ez = P[t * 4 + 2] - icz; irms += mref * R[t] * (ex * ex + ey * ey + ez * ez); }
+    }
+    return { n: n, mass: mass, com: [gx, gy, gz], vel: [vx / mass, vy / mass, vz / mass], imp: imp / mass, iron: iron / mass, R: Rg, Tsurf: ws > 0 ? Ts / ws : 0,
+             impMass: imp, impCom: [icx, icy, icz], impRms: imp > 0 ? Math.sqrt(irms / imp) : 0 };
   }
   var A = stats(g1), B = g2 >= 0 ? stats(g2) : null;
   // the planet's spin: angular momentum about its centre over the moment of
@@ -2013,7 +2092,8 @@ function fof(N, mref, a, P, V, R, D, spring, touch, cap, sort) {
   var second = null;
   if (B && B.n >= Math.max(8, N / 1000)) {
     var dAB = Math.sqrt((B.com[0] - A.com[0]) * (B.com[0] - A.com[0]) + (B.com[1] - A.com[1]) * (B.com[1] - A.com[1]) + (B.com[2] - A.com[2]) * (B.com[2] - A.com[2]));
-    if (dAB > A.R + B.R + 2 * a) second = { mass: B.mass, dist: dAB, bound: energy(B.com[0], B.com[1], B.com[2], B.vel[0], B.vel[1], B.vel[2]) < 0, imp: B.imp, iron: B.iron };
+    if (dAB > A.R + B.R + 2 * a) second = { mass: B.mass, dist: dAB, bound: energy(B.com[0], B.com[1], B.com[2], B.vel[0], B.vel[1], B.vel[2]) < 0, imp: B.imp, iron: B.iron,
+                                             com: B.com, vel: B.vel, R: B.R, Tsurf: B.Tsurf };
   }
   // the books. Angular momentum about the origin, where the barycentre was
   // put. Potential energy off the mesh: half of m·φ for a particle on it (the
@@ -2071,7 +2151,8 @@ function fof(N, mref, a, P, V, R, D, spring, touch, cap, sort) {
     for (i = 0; i < N; i++) { var dst = bins[keys[i]]++; perm[dst] = i; into[i] = dst; }
     for (i = 0; i < list.length; i++) list[i] = into[list[i]];
   }
-  return { largest: A.mass, largestImp: A.imp, largestIron: A.iron, day: day, orbit: orbit, escape: esc, second: second, com: A.com,
+  return { largest: A.mass, largestImp: A.imp, largestIron: A.iron, day: day, orbit: orbit, escape: esc, second: second, com: A.com, vel: A.vel, R: A.R, Tsurf: A.Tsurf,
+           impMass: A.impMass, impCom: A.impCom, impRms: A.impRms,
            M: Mt, drift: Math.sqrt(px * px + py * py + pz * pz) / Mt, L: Math.sqrt(Jx * Jx + Jy * Jy + Jz * Jz),
            KE: ke, PE: pe, EL: elastic, Q: Q, unseated: unseated / N, full: full / N,
            pp: { list: list, loose: nLoose }, jD: jD, moon: moon, perm: perm };
@@ -2085,12 +2166,12 @@ var worker = null, analyzing = false, diagBuf = null, analyzedAt = 0, analyses =
 // buffers are read a frame or two later, when the fence says the GPU is done
 var pbo = null, pboSet = 0, pending = null, asyncRead = true;   // two, used in turn, each holding all three images: one is never written while its last copy is still to be read
 try {
-  var src = fof.toString() + '\nself.onmessage = function (e) { var d = e.data; var r = fof(d.N, d.m, d.a, d.P, d.V, d.R, d.D, d.k, d.touch, d.cap, d.sort); var tr = [d.P.buffer, d.V.buffer, d.D.buffer, r.pp.list.buffer]; if (r.perm) tr.push(r.perm.buffer); self.postMessage({ gen: d.gen, r: r, P: d.P, V: d.V, D: d.D }, tr); };';
+  var src = fof.toString() + '\nself.onmessage = function (e) { var d = e.data; var r = fof(d.N, d.m, d.a, d.P, d.V, d.R, d.D, d.k, d.touch, d.cap, d.sort); var tr = [d.P.buffer, d.V.buffer, d.D.buffer, r.pp.list.buffer]; if (r.perm) tr.push(r.perm.buffer); self.postMessage({ gen: d.gen, r: r, P: d.P, V: d.V, D: d.D, t: d.t }, tr); };';
   worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
   worker.onmessage = function (e) {
     analyzing = false;
     posBuf = e.data.P; velBuf = e.data.V; diagBuf = e.data.D;
-    if (sim && e.data.gen === sim.gen) applyReport(e.data.r);
+    if (sim && e.data.gen === sim.gen) { e.data.r.t = e.data.t; applyReport(e.data.r); }
   };
   worker.onerror = function () { worker = null; analyzing = false; };
 } catch (e) { worker = null; }
@@ -2155,7 +2236,7 @@ function analyze(sync) {
     gl.readBuffer(gl.COLOR_ATTACHMENT1); gl.readPixels(0, 0, sim.W, sim.H, gl.RGBA, gl.FLOAT, 2 * bytes);
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    pending = { sync: gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0), gen: sim.gen, sort: sort, P: P, V: V, D: D, set: s0 };
+    pending = { sync: gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0), gen: sim.gen, sort: sort, P: P, V: V, D: D, set: s0, t: sim.t };
     gl.flush();
     analyzing = true;
     posBuf = null; velBuf = null; diagBuf = null;
@@ -2170,10 +2251,12 @@ function analyze(sync) {
     analyzing = true;
     posBuf = null; velBuf = null; diagBuf = null;
     var R = sim.matR.slice();
-    worker.postMessage({ gen: sim.gen, N: N, m: sim.m, a: sim.a, P: P, V: V, R: R, D: D, k: sim.k, touch: 2 * sim.a, cap: PP_CAP, sort: sort }, [P.buffer, V.buffer, R.buffer, D.buffer]);
+    worker.postMessage({ gen: sim.gen, N: N, m: sim.m, a: sim.a, P: P, V: V, R: R, D: D, k: sim.k, touch: 2 * sim.a, cap: PP_CAP, sort: sort, t: sim.t }, [P.buffer, V.buffer, R.buffer, D.buffer]);
     return;
   }
-  applyReport(fof(N, sim.m, sim.a, P, V, sim.matR, D, sim.k, 2 * sim.a, PP_CAP, sort));
+  var r = fof(N, sim.m, sim.a, P, V, sim.matR, D, sim.k, 2 * sim.a, PP_CAP, sort);
+  r.t = sim.t;
+  applyReport(r);
 }
 // the pack buffers, once the fence has signalled: read, and off to the worker
 function collect() {
@@ -2189,7 +2272,7 @@ function collect() {
   gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 2 * bytes, p.V);
   gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
   var R = sim.matR.slice();
-  worker.postMessage({ gen: sim.gen, N: sim.N, m: sim.m, a: sim.a, P: p.P, V: p.V, R: R, D: p.D, k: sim.k, touch: 2 * sim.a, cap: PP_CAP, sort: p.sort }, [p.P.buffer, p.V.buffer, R.buffer, p.D.buffer]);
+  worker.postMessage({ gen: sim.gen, N: sim.N, m: sim.m, a: sim.a, P: p.P, V: p.V, R: R, D: p.D, k: sim.k, touch: 2 * sim.a, cap: PP_CAP, sort: p.sort, t: p.t }, [p.P.buffer, p.V.buffer, R.buffer, p.D.buffer]);
 }
 
 // ---------- camera ----------
@@ -2307,12 +2390,49 @@ function render() {
     gl.useProgram(shadeProg.p);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, blurB.mat);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, blurB.dep);
-    gl.uniform1i(s.uMat, 0); gl.uniform1i(s.uDep, 1);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, gbuf.dep);
+    gl.uniform1i(s.uMat, 0); gl.uniform1i(s.uDep, 1); gl.uniform1i(s.uDepRaw, 2);
     gl.uniform2f(s.uInvP, 1 / proj[0], 1 / proj[5]);
     gl.uniform2f(s.uRes, w, h);
     gl.uniform3fv(s.uSunEye, sunEye);
     gl.uniform1f(s.uGlow, S.glow);
     gl.uniform1f(s.uGlowT, LOOK.glowT); gl.uniform1f(s.uWhite, LOOK.white);
+    // the hot bodies as lights: the planet and the second body, where the
+    // last report put them plus their drift since, shining with the glow of
+    // their surface temperature — brighter than the sun on anything near
+    var nl = 0, lp = [0, 0, 0, 0, 0, 0], lc = [0, 0, 0, 0, 0, 0], lr = [1, 1], no = 0, occ = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    if (report && report.Tsurf !== undefined && sim.phase === 'full') {
+      var lag = sim.t - (report.t || sim.t), bodies = [report];
+      if (report.second && report.second.com) bodies.push(report.second);
+      var toEye = function (x, y, z) {
+        return [view[0] * x + view[4] * y + view[8] * z + view[12], view[1] * x + view[5] * y + view[9] * z + view[13], view[2] * x + view[6] * y + view[10] * z + view[14]];
+      };
+      var occlude = function (c, r) { occ[no * 4] = c[0]; occ[no * 4 + 1] = c[1]; occ[no * 4 + 2] = c[2]; occ[no * 4 + 3] = r; no++; };
+      bodies.forEach(function (b) {
+        var e = toEye(b.com[0] + b.vel[0] * lag, b.com[1] + b.vel[1] * lag, b.com[2] + b.vel[2] * lag);
+        occlude(e, b.R);                                  // every body shadows the other's light
+        if (b.Tsurf < 900) return;
+        lp[nl * 3] = e[0]; lp[nl * 3 + 1] = e[1]; lp[nl * 3 + 2] = e[2];
+        var c = glowCol(b.Tsurf), k = S.glow * LOOK.magma * (1 + LOOK.reach * LOOK.reach);
+        lc[nl * 3] = c[0] * k; lc[nl * 3 + 1] = c[1] * k; lc[nl * 3 + 2] = c[2] * k;
+        lr[nl] = b.R * b.R;
+        nl++;
+      });
+      // the impactor, while its material is still a ball inside the merged
+      // group — the first hour, before it is smeared over the planet — is a
+      // ball in the planet's light too: it hides the planet from its own
+      // far side, and from what the contact throws off it
+      if (report.impMass > 0.003) {
+        var ri = Math.cbrt(report.impMass / S.dens);
+        if (report.impRms < 1.3 * 0.775 * ri) occlude(toEye(report.impCom[0] + report.vel[0] * lag, report.impCom[1] + report.vel[1] * lag, report.impCom[2] + report.vel[2] * lag), ri);
+      }
+    }
+    gl.uniform1i(s.uNO, no); gl.uniform4fv(s['uOcc[0]'], occ);
+    lastLights = { nl: nl, lp: lp.slice(), lc: lc.slice(), lr: lr.slice(), eye: eye.slice(), view: Array.from(view), loc: [s['uLPos[0]'], s['uLCol[0]'], s['uLR2[0]'], s.uNL] };
+    gl.uniform1i(s.uNL, nl);
+    gl.uniform3fv(s['uLPos[0]'], lp); gl.uniform3fv(s['uLCol[0]'], lc); gl.uniform1fv(s['uLR2[0]'], lr);
+    gl.uniform1f(s.uReach2, LOOK.reach * LOOK.reach);
+    gl.uniform1f(s.uDbg, LOOK.dbg || 0);
     gl.uniform1f(s.uP22, proj[10]);
     gl.uniform1f(s.uP32, proj[14]);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -2519,6 +2639,7 @@ window.__impact = {
   get state() { return { analyzing: analyzing, pending: !!pending, worker: !!worker, analyses: analyses, analyzedAt: analyzedAt, stepNo: sim && sim.stepNo, waitStatus: pending ? gl.clientWaitSync(pending.sync, 0, 0) : null }; },
   sortNow: function () { analyses = 0; analyze(true); return report; },
   get look() { return LOOK; },
+  get lights() { return lastLights; },
   temps: function () {
     var fbo = gl.createFramebuffer(), buf = new Float32Array(sim.W * sim.H * 4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);

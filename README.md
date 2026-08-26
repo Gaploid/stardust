@@ -205,7 +205,20 @@ the smoothed depth, lit by one sun. Hot rock adds its own light by its
 temperature: a Planckian ramp whose brightness levels off, so that the
 40 000 K sparks off the contact and the 1000 K far side both read; what
 comes out brighter than white blooms, a narrow halo and a wide one at a
-quarter of the size. A friends-of-friends pass in a worker
+quarter of the size. And the hot bodies light everything else: the planet
+and the second body are point lights in the same pass, placed where the
+last report put them plus their drift since, shining with the colour and
+brightness of their surface — the outer fifth of the radius, weighted by
+T², so the light is the hot patches' — so the disk hangs in the planet's
+glow and a moonlet is lit from below. A convex body cannot light itself,
+so the cold far side stays cold; and the bodies cast shadows in each
+other's light as balls — the planet, the second body, and the impactor
+for as long as its material is still one ball inside the merged pair (the
+first hour, by the spread of its particles) — so the crust it throws off
+its far side, which cannot see the planet through it, is not lit by it.
+The light takes the particle's own normal where the smoothed skin's
+disagrees, since along a silhouette the skin's is noise and the light is
+twenty times the sun. A friends-of-friends pass in a worker
 reads the positions back every second or so — through pack buffers and a
 fence, so the frame never waits on the GPU for it — to tell the planet from
 its disk and to keep the books.
@@ -214,6 +227,12 @@ its disk and to keep the books.
 
 Broad strokes, newest first; the commit history tells each one in full.
 
+- **2026-08-26 — Lit by the magma.** The planet and the second body light
+  what is near them with the glow of their own surface: the arm and the
+  disk get their planet-facing sides in orange, a moonlet is lit from
+  below, the planet's cold far side stays dark, and the bodies shadow each
+  other as balls — the first cut lit the crust spalled off the impactor's
+  far side through the impactor, a glint along its rim.
 - **2026-08-26 — Heat.** The heat the contacts make stays in the material
   and spreads by contact; every particle has a temperature and the rock glows
   by it — the planet a magma ocean at 3000 K a day after the canonical
