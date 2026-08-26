@@ -33,53 +33,15 @@ Drag rotates · Space scatters · wheel zooms.
 **Live: https://gaploid.github.io/stardust/collision.html**
 
 A second page, and a different kind of thing: not a shape to assemble but a
-simulation. Two planets of real mass — a proto-Earth and an impactor you size
-from 0.02 to 1 M⊕ — approach under their own gravity and collide. They are
-made of 16k to 262k body-particles that all pull on each other; touching
-particles push back like a stiff spring and bleed energy into heat, so the
-material stays incompressible, splashes, and clumps back together. The heat
-stays in the material — it spreads by contact from particle to particle, and
-nothing radiates it away in hours — so every particle has a temperature and
-the rock glows by it: deep red past 900 K, orange by 5000, white past
-40 000. A day after the canonical impact the planet is a magma ocean at
-3000 K, the impactor's material at ten thousand, the far side barely warm;
-the sparks off the first contact come away white. Both bodies are differentiated: an iron core carrying a third
-of the mass at two and a half times the mantle's density (Earth's numbers),
-a mantle, and a crust; the impactor has a Mars-like density. Density is mass
-— every particle has the same size, the core's weigh 2.5× — so cores sink
-and the readout can say what the pieces are made of. Time runs in real hours:
-the unit is √(R³/GM) for Earth, 13.4 minutes, and the clock in the corner
-counts them.
-
-Presets: **theia** (the canonical Moon-forming impact, 0.1 M⊕ at 45°),
-**head-on**, **hit & run** (grazing and fast — the impactor survives and
-leaves), **twins** (equal masses), **shatter** (2.6× escape speed). Both
-bodies arrive turning about their axes, prograde, with days of about eight
-hours — a young planet's. The readout groups particles by contact every second or so and reports
-the largest body — its mass, how much of it came from the impactor, its iron
-fraction and the length of its day from its spin — what is bound in orbit
-around it, what is escaping, and the second body once one has formed, with
-the same make-up: the numbers the literature judges a Moon-forming impact by.
-A **moon** line says what Moon the disk in orbit would make, by Ida, Canup
-& Stewart's fit to disk-accretion runs (from the disk's mass and angular
-momentum: the months the sim cannot run, in one number). Under those, the
-books: the barycentre's drift, the angular momentum in units of today's
-Earth–Moon system and how much of it the run has kept, the mechanical
-energy, the heat the contacts have made and the mean temperature it makes,
-and whether the two add up to what they were at the start — plus how the
-contact cells are doing and how much of the loose material the pairwise pass
-is holding.
-*Advanced* has the mass ratio, the angle, the speed in units of escape
-velocity, each body's spin as a fraction of its breakup rate (shown as the
-day it makes; none, retrograde, or up to Ćuk & Stewart's 2.6-hour Earth),
-the body count, the restitution, the core mass fraction and the impactor's
-density. A spinning body is cut as the Maclaurin spheroid its spin calls for,
-so it arrives already in equilibrium.
-
-It is not SPH — no shocks, no vaporization — but everything the eye picks out
-of the real runs is here: the deformation, the tidal arm, the disk,
-re-accretion. The disk clumps in hours where the real Moon took months; the
-clock is honest about the hours, not about that.
+simulation. Two planets of real mass — a proto-Earth and an impactor from 0.02
+to 1 M⊕, differentiated iron core to crust — fall together under their own
+gravity and collide: 16k to 262k particles, each pulling on all the others,
+touching ones pushing back like a stiff spring and bleeding the energy into
+heat that stays in the rock and lights it, deep red past 900 K, white past
+40 000. Five presets, from the canonical Moon-forming impact to a hit-and-run;
+the readout follows the largest body and its disk, says what Moon that disk
+would make, and keeps the books. Not SPH — no shocks, no vaporization — but the
+deformation, the tidal arm, the disk and the re-accretion are all there.
 
 Drag rotates · wheel zooms · Space pauses · R restarts · F follows the largest body.
 
@@ -136,130 +98,20 @@ via the Harvard/SAO catalogue archive. Public domain / free to use with credit.
 
 ## Tech
 
-A single self-contained `index.html` (~790 KB) — no dependencies, no build step.
-One WebGL 1 point-sprite pass; all motion (assembly, waves, vortices, depth of
-field) is computed in the vertex shader.
+Two self-contained pages, no dependencies and no build step. `index.html` is
+WebGL 1: one point-sprite pass, all motion in the vertex shader, exposure
+normalized against particle count and size so those sliders change grain, not
+brightness (10M points is 333 MB of VRAM, so it is opt-in). A body is an onion
+of Fibonacci-spiral shells, crept into equilibrium so the skin has no terracing.
 
-Exposure is normalized against both particle count and particle size. Additive
-blending makes on-screen brightness a product of coverage and density, so either
-slider would otherwise double as an exposure control and burn out the limb —
-where the sphere is edge-on and points pile up. They change grain instead.
-
-Vertex buffers are sized to the particle count the slider asks for and grow only
-when it is raised — 10M particles is 333 MB of VRAM, so it is opt-in. The CPU
-side stages one 25k chunk at a time, which keeps generation off the main thread
-in slices and costs ~2 MB of RAM whatever the count.
-
-A body is an onion: concentric shells a lattice-layer apart, each holding as
-many particles as its own volume is worth, spread over the shell by the
-Fibonacci spiral, each shell turned and flipped at random. The first version
-cut a face-centred cubic lattice to a sphere, and it was terraced — the
-lattice planes meet the surface in steps a particle high, and the skin drew
-every step, so the blue crust wore concentric rings in every frame. An
-onion's outer shell *is* the surface. But a spiral cannot pack a sphere as
-tightly as the plane packs, and the shells are not in registry with one
-another, so the particles land some way inside each other: the pile is first
-relaxed on the CPU with no inertia at all, ten sweeps of pushing every
-overlapping pair apart by half its overlap and letting nothing leave the
-body's own spheroid — a particle that escapes an overlap outward stands proud
-of the skin as a pimple. What overlap is left, a tenth of a particle, is
-about what the weight of the rock above presses out anyway; but at the
-surface the contact spring is a hundred times gravity, and left alone the
-settle fires those particles off like popcorn — the books saw two thousandths
-of an Earth in orbit before the impactor had even arrived. So the settle is a
-creep: damped as before, and with a speed limit, so the pile can only walk to
-its equilibrium. It takes twice as long that way and leaves a tenth of that
-debris. A pile packed at random jams looser
-than a lattice — 64 % of the space against 74 % — so its grains are cut 4 %
-smaller than the lattice's, which is what puts the body back at the radius
-its mass asks for, and back to the binding energy and the books it had.
-
-`collision.html` is WebGL 2, also dependency-free, and has no compute shaders
-or atomics to lean on, so the two hard parts are done with tricks. Contacts:
-a hashed grid of cells one neighbour-radius wide, filled by depth-peeling —
-every particle draws a one-pixel point at its cell and the depth test keeps
-the lowest index; eight passes give eight slots a cell (the books show eight
-are never short, not even at the moment of impact), and a particle then
-searches its 27 cells instead of the whole world. Gravity: particle-mesh —
-mass is splatted onto a 64³ mesh by additive blending in full floats
-(cloud-in-cell; half floats lose 2 % of a dense cell's mass to rounding), the
-acceleration at every occupied cell is the direct sum over the 20³ fine cells
-around it (3.75 R⊕: the whole planet and its near disk), taken at the cell's
-centre of mass so that cell on cell is equal and opposite, plus the 16³
-coarse cells' centres of mass beyond, and particles read it back trilinearly;
-off the mesh, everything on it acts as one mass, and pulls back on it with
-the equal and opposite. A mesh cell is 0.19 R⊕ — five particle diameters at
-131k — so a moonlet a cell or two across is one the mesh can only smear, and
-the first version's moonlets came apart into puffs. So the loose material —
-everything beyond 1.3 radii of the planet's centre, up to 8k particles, the
-farthest first — gets its gravity among itself corrected pairwise,
-P³M-style: what Newton gives a pair less what the mesh already gave it, out
-to five cells. The mesh's own pair force is measured at load by putting two
-particles on the grid and repeating its arithmetic on the CPU, so the table
-stays right whatever the mesh does. Moonlets bind as they should; the
-planet, ten cells across, stays on the mesh. The approach is a two-body problem solved
-on the CPU with the planets carried rigid, so the expensive part starts at
-first touch. Symplectic Euler, a step set by the contact spring's period; the
-cells are rebuilt every other step (a particle moves under a fifth of a radius
-a step, the search radius has more than half to spare) and the mesh every
-eighth (gravity changes on the scale of a time unit, a step is a thousandth of
-one), which halves the cost of a step without changing a digit of the result.
-Every few thousand steps the particles are put back in spatial (Morton)
-order — every per-particle texture relabelled, nothing else — so that a
-particle's neighbours are its neighbours in memory too. The spring is sized
-for the impact speed; an hour and a half past first touch the splash is
-over, the spring is let go to half its stiffness (the dashpot with it, so
-bounces stay the same) and the step, set by the spring's period, grows by
-√2 — a body at rest then overlaps 2 % of a radius instead of 1.
-The mesh's pull is given all at once, on the step it is measured, as the
-impulse for the eight steps it stands for: held for those steps instead it
-lags, and a turning body feeling its own field a little behind it is braked
-by it like by a tide — 0.4 % of the angular momentum in six time units,
-which the books caught; as an impulse it keeps L to 0.01 % over nine hours.
-The energy line's balance is what the step itself eats or makes — the
-dashpot's work is booked with the velocity before the kick — within a
-percent over a day. (It read −2.8 % until the heat became a temperature and
-was looked at per particle: a barely-loaded contact, every contact in a body
-at rest, was booking its spring's work as heat with either sign.)
-
-The picture is three screen-space passes borrowed from fluid rendering:
-sphere impostors with per-fragment depth, a bilateral blur two particles wide
-that melts them into a skin without crossing a silhouette, and normals from
-the smoothed depth, lit by one sun. That blur can do nothing for the outline,
-which it never reaches across: the silhouette stayed the union of the discs
-drawn at it, a staircase of them, each disc lit like a bead. So the blur
-carries a second, narrower field alongside the depth — how much of the
-neighbourhood the body covers — and the shading cuts the skin where the
-coverage falls under nine tenths and fades the last pixel of it, which takes
-the beads off the limb and leaves a planet's edge. Only a packed surface is
-cut back that far; a lone fragment is all edge, and keeps its own. Hot rock adds its own light by its
-temperature: a Planckian ramp whose brightness levels off, so that the
-40 000 K sparks off the contact and the 1000 K far side both read; what
-comes out brighter than white blooms, a narrow halo and a wide one at a
-quarter of the size. And the hot bodies light everything else: the planet
-and the second body are point lights in the same pass, placed where the
-last report put them plus their drift since, shining with the colour and
-brightness of their surface — the outer fifth of the radius, weighted by
-T², so the light is the hot patches' — so the disk hangs in the planet's
-glow and a moonlet is lit from below. A convex body cannot light itself,
-so the cold far side stays cold; and the bodies cast shadows in each
-other's light as balls — the planet, the second body, and the impactor
-for as long as its material is still one ball inside the merged pair (the
-first hour, by the spread of its particles) — so the crust it throws off
-its far side, which cannot see the planet through it, is not lit by it.
-The light takes the particle's own normal where the smoothed skin's
-disagrees, since along a silhouette the skin's is noise and the light is
-twenty times the sun. A friends-of-friends pass in a worker
-reads the positions back every second or so — through pack buffers and a
-fence, so the frame never waits on the GPU for it — to tell the planet from
-its disk and to keep the books.
-
-The frame ends the way a photograph would. An ACES-style curve replaces the
-old 1 − e^−x: the shadows go dark and the hottest roll off to white on a
-shoulder instead of clipping flat. The sun itself is in the sky — a disk with
-a glare where the light comes from, drawn behind the bodies so they hide it
-and its glare stops at their limb. A light vignette, and FXAA over the
-result, since the impostors' silhouettes and the stars are points.
+`collision.html` is WebGL 2 with no compute shaders to lean on, so the hard
+parts are tricks: contacts from a hashed grid filled by depth-peeling, gravity
+from a 64³ particle mesh with the loose material corrected pairwise against it,
+P³M-style, so moonlets bind instead of smearing. Symplectic Euler, Morton
+order, and books on momentum and energy that caught most of what was wrong. The
+picture is screen-space fluid rendering — impostors, a bilateral blur that melts
+them into a skin, a coverage cut that takes the beads off the limb — with hot
+rock glowing by its temperature and lighting everything else. ACES and FXAA.
 
 ## Changelog
 
