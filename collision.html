@@ -1079,6 +1079,7 @@ var SHADE_FS = [
   'uniform vec3 uLCol[2];',     // the light at their surface
   'uniform float uLR2[2];',     // their radius²
   'uniform float uReach2;',     // the fall-off, 1/(d²/R² + reach²): inverse-square far off, kept from blowing up close in
+  'uniform float uRad;',        // a particle's radius, to know how many pixels wide one stands here
   'uniform float uEdge;',       // where the silhouette ends, in coverage, and how soft its last pixel is
   'uniform float uEdgeSoft;',
   'uniform float uDbg;',        // LOOK.dbg: 1 the ember alone, 2 the particle normal, 3 the direction to the first light, 4 the skin normal
@@ -1135,8 +1136,13 @@ var SHADE_FS = [
   // a staircase of them, and the blur cannot help — it never reaches across
   // into the background. The coverage can: the tips of the discs stand under
   // it and are cut, the rest of the edge fades over its last pixel instead of
-  // stepping. Only a packed surface is cut back: a lone fragment is all edge
-  '  float cut = mix(0.5, uEdge, smoothstep(2.0, 6.0, floor(d.g)));',
+  // stepping. What is cut back is only what has a staircase to lose: a packed
+  // surface, drawn by discs several pixels wide. A lone fragment is all edge —
+  // and so is everything once the view is far enough out that a particle is a
+  // pixel or two, where the coverage of a dot that small is under a half
+  // wherever you stand on it and cutting would erase the spray
+  '  float dpx = uRad * uRes.x / (uInvP.x * z);',                                                // this particle, across, in pixels
+  '  float cut = mix(0.35, uEdge, smoothstep(2.0, 6.0, floor(d.g))) * smoothstep(2.5, 6.0, dpx);',
   '  float alpha = smoothstep(cut - uEdgeSoft, cut + uEdgeSoft, fract(d.g));',
   '  if (alpha <= 0.0) discard;',
   '  vec3 p = posAt(uDep, me);',
@@ -2642,7 +2648,7 @@ function render() {
     gl.uniform1i(s.uNL, nl);
     gl.uniform3fv(s['uLPos[0]'], lp); gl.uniform3fv(s['uLCol[0]'], lc); gl.uniform1fv(s['uLR2[0]'], lr);
     gl.uniform1f(s.uReach2, LOOK.reach * LOOK.reach);
-    gl.uniform1f(s.uEdge, LOOK.edge); gl.uniform1f(s.uEdgeSoft, LOOK.edgeSoft);
+    gl.uniform1f(s.uEdge, LOOK.edge); gl.uniform1f(s.uEdgeSoft, LOOK.edgeSoft); gl.uniform1f(s.uRad, sim.a);
     gl.uniform1f(s.uDbg, LOOK.dbg || 0);
     gl.uniform1f(s.uP22, proj[10]);
     gl.uniform1f(s.uP32, proj[14]);
