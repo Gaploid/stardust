@@ -190,8 +190,9 @@ The picture is three screen-space passes borrowed from fluid rendering:
 sphere impostors with per-fragment depth, a bilateral blur two particles wide
 that melts them into a skin without crossing a silhouette, and normals from
 the smoothed depth, lit by one sun. A friends-of-friends pass in a worker
-reads the positions back every second or so to tell the planet from its disk
-and to keep the books.
+reads the positions back every second or so — through pack buffers and a
+fence, so the frame never waits on the GPU for it — to tell the planet from
+its disk and to keep the books.
 
 ## Changelog
 

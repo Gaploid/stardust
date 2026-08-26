@@ -1503,6 +1503,10 @@ function build() {
     damp: Math.exp(-dt * 12), cool: Math.exp(-dt / 12), heatK: 0.7 / mref, gen: ++gen
   };
   sim.diagFbo = fboFor(sim.diag);
+  if (!pbo) pbo = [gl.createBuffer(), gl.createBuffer()];
+  for (var b = 0; b < 2; b++) { gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo[b]); gl.bufferData(gl.PIXEL_PACK_BUFFER, W * H * 16 * 3, gl.STREAM_READ); }
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+  if (pending) { gl.deleteSync(pending.sync); pending = null; }
   if (sim.perm) gl.deleteTexture(sim.perm);
   sim.perm = floatTex(W, H, null, gl.R32F, gl.FLOAT, gl.RED);
   if (pp.slot) gl.deleteTexture(pp.slot);
@@ -1971,6 +1975,10 @@ function fof(N, mref, a, P, V, R, D, spring, touch, cap, sort) {
 // the analysis runs in a worker when it can (a quarter million bodies take
 // tens of milliseconds); the buffers go back and forth without copying
 var worker = null, analyzing = false, diagBuf = null, analyzedAt = 0, analyses = 0;
+// the read-back for the worker goes through pixel-pack buffers and a fence, so
+// the frame never waits on the GPU for it: the copy is asked for, and the
+// buffers are read a frame or two later, when the fence says the GPU is done
+var pbo = null, pboSet = 0, pending = null, asyncRead = true;   // two, used in turn, each holding all three images: one is never written while its last copy is still to be read
 try {
   var src = fof.toString() + '\nself.onmessage = function (e) { var d = e.data; var r = fof(d.N, d.m, d.a, d.P, d.V, d.R, d.D, d.k, d.touch, d.cap, d.sort); var tr = [d.P.buffer, d.V.buffer, d.D.buffer, r.pp.list.buffer]; if (r.perm) tr.push(r.perm.buffer); self.postMessage({ gen: d.gen, r: r, P: d.P, V: d.V, D: d.D }, tr); };';
   worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
@@ -2031,6 +2039,23 @@ function analyze(sync) {
   var V = (!sync && velBuf && velBuf.length === N * 4) ? velBuf : new Float32Array(N * 4);
   var D = (!sync && diagBuf && diagBuf.length === N * 4) ? diagBuf : new Float32Array(N * 4);
   passDiag();
+  if (worker && !sync && asyncRead) {
+    // into a pack buffer, all three images, no waiting; the frame loop collects it
+    var s0 = pboSet; pboSet ^= 1;
+    var bytes = sim.W * sim.H * 16;
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo[s0]);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0); gl.readPixels(0, 0, sim.W, sim.H, gl.RGBA, gl.FLOAT, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, sim.src.fbo);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0); gl.readPixels(0, 0, sim.W, sim.H, gl.RGBA, gl.FLOAT, bytes);
+    gl.readBuffer(gl.COLOR_ATTACHMENT1); gl.readPixels(0, 0, sim.W, sim.H, gl.RGBA, gl.FLOAT, 2 * bytes);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    pending = { sync: gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0), gen: sim.gen, sort: sort, P: P, V: V, D: D, set: s0 };
+    gl.flush();
+    analyzing = true;
+    posBuf = null; velBuf = null; diagBuf = null;
+    return;
+  }
   gl.readBuffer(gl.COLOR_ATTACHMENT0); gl.readPixels(0, 0, sim.W, sim.H, gl.RGBA, gl.FLOAT, D);
   gl.bindFramebuffer(gl.FRAMEBUFFER, sim.src.fbo);
   gl.readBuffer(gl.COLOR_ATTACHMENT0); gl.readPixels(0, 0, sim.W, sim.H, gl.RGBA, gl.FLOAT, P);
@@ -2041,9 +2066,25 @@ function analyze(sync) {
     posBuf = null; velBuf = null; diagBuf = null;
     var R = sim.matR.slice();
     worker.postMessage({ gen: sim.gen, N: N, m: sim.m, a: sim.a, P: P, V: V, R: R, D: D, k: sim.k, touch: 2 * sim.a, cap: PP_CAP, sort: sort }, [P.buffer, V.buffer, R.buffer, D.buffer]);
-  } else {
-    applyReport(fof(N, sim.m, sim.a, P, V, sim.matR, D, sim.k, 2 * sim.a, PP_CAP, sort));
+    return;
   }
+  applyReport(fof(N, sim.m, sim.a, P, V, sim.matR, D, sim.k, 2 * sim.a, PP_CAP, sort));
+}
+// the pack buffers, once the fence has signalled: read, and off to the worker
+function collect() {
+  var st = gl.clientWaitSync(pending.sync, 0, 0);
+  if (st !== gl.ALREADY_SIGNALED && st !== gl.CONDITION_SATISFIED) return;
+  gl.deleteSync(pending.sync);
+  var p = pending; pending = null;
+  if (!sim || p.gen !== sim.gen) { analyzing = false; return; }
+  var bytes = sim.W * sim.H * 16;
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo[p.set]);
+  gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, p.D);
+  gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, bytes, p.P);
+  gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 2 * bytes, p.V);
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+  var R = sim.matR.slice();
+  worker.postMessage({ gen: sim.gen, N: sim.N, m: sim.m, a: sim.a, P: p.P, V: p.V, R: R, D: p.D, k: sim.k, touch: 2 * sim.a, cap: PP_CAP, sort: p.sort }, [p.P.buffer, p.V.buffer, R.buffer, p.D.buffer]);
 }
 
 // ---------- camera ----------
@@ -2263,6 +2304,7 @@ function frame() {
     }
   }
   render();
+  if (pending) collect();
   if (sim && sim.phase !== 'settle' && (frameNo % 45 === 0 || sim.stepNo - analyzedAt >= 360)) analyze();
   frameNo++;
   fpsFrames++;
@@ -2343,6 +2385,8 @@ window.__impact = {
   get sim() { return sim; },
   get report() { return report; },
   set meshEvery(n) { MESH_EVERY = n; },
+  set asyncRead(v) { asyncRead = !!v; },
+  get state() { return { analyzing: analyzing, pending: !!pending, worker: !!worker, analyses: analyses, analyzedAt: analyzedAt, stepNo: sim && sim.stepNo, waitStatus: pending ? gl.clientWaitSync(pending.sync, 0, 0) : null }; },
   sortNow: function () { analyses = 0; analyze(true); return report; },
   // the mesh's own books: the net force and torque its cells exert on each
   // other, which should be nothing — as fractions of the sum of their sizes
