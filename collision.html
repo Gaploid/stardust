@@ -104,7 +104,8 @@
     margin-top: 10px;
     display: flex;
     flex-direction: column;
-    gap: 7px;
+    width: fit-content;
+    gap: 6px;
     padding: 12px 14px;
     background: rgba(8, 12, 18, 0.78);
     border: 1px solid #22303e;
@@ -113,14 +114,14 @@
   #adv-panel[hidden] { display: none; }
   #adv-panel label {
     display: grid;
-    grid-template-columns: 96px 120px 64px;
+    grid-template-columns: 88px 110px 40px;
     align-items: center;
-    gap: 10px;
+    gap: 9px;
     font-size: 10px;
     letter-spacing: 0.1em;
   }
   #adv-panel input[type="range"] {
-    width: 120px;
+    width: 110px;
     accent-color: #7f9cbb;
     cursor: pointer;
   }
@@ -132,7 +133,7 @@
     cursor: pointer;
   }
   #adv-panel span { text-align: right; color: #9db0c4; font-variant-numeric: tabular-nums; }
-  #adv-panel .note { margin-top: 4px; font-size: 9px; letter-spacing: 0.08em; color: #3d4a58; text-transform: none; }
+  #adv-panel .note { margin: 1px 0 2px; padding-top: 6px; border-top: 1px solid #1a2430; font-size: 9px; letter-spacing: 0.08em; color: #3d4a58; text-transform: none; }
   #hud-report {
     bottom: 64px;
     right: 26px;
@@ -177,7 +178,7 @@
     .hud { font-size: 12px; }
     .hud button { padding: 5px 0 6px; }
     #hud-preset, #hud-run { gap: 4px 14px; }
-    #adv-panel { max-width: calc(100vw - 64px); }
+    #adv-panel { width: auto; max-width: calc(100vw - 64px); }   /* on a phone it spans the column, sliders and all */
     #adv-panel label { grid-template-columns: 84px 1fr 56px; }
     #adv-panel input[type="range"] { width: 100%; height: 26px; }
     #hud-stat { bottom: 12px; right: 16px; }
@@ -212,20 +213,18 @@
 <div id="hud-adv">
   <button id="adv-toggle"><span class="ic">⚙️</span>advanced</button>
   <div id="adv-panel" hidden>
-    <label>impactor <input type="range" id="set-q" min="0.02" max="1" step="0.01" value="0.1"><span id="val-q">0.10 M⊕</span></label>
-    <label>angle <input type="range" id="set-angle" min="0" max="85" step="1" value="45"><span id="val-angle">45°</span></label>
-    <label>speed <input type="range" id="set-vfac" min="0.8" max="3" step="0.05" value="1.05"><span id="val-vfac">1.05 v.esc</span></label>
-    <label>spin <input type="range" id="set-spin0" min="-0.55" max="0.55" step="0.01" value="0.18"><span id="val-spin0">7.8 h</span></label>
-    <label>impactor spin <input type="range" id="set-spin1" min="-0.55" max="0.55" step="0.01" value="0.20"><span id="val-spin1">8.1 h</span></label>
+    <label>impactor M⊕ <input type="range" id="set-q" min="0.02" max="1" step="0.01" value="0.1"><span id="val-q">0.10</span></label>
+    <label>angle ° <input type="range" id="set-angle" min="0" max="85" step="1" value="45"><span id="val-angle">45</span></label>
+    <label>speed v.esc <input type="range" id="set-vfac" min="0.8" max="3" step="0.05" value="1.05"><span id="val-vfac">1.05</span></label>
     <label>bodies <input type="range" id="set-n" min="0" max="4" step="1" value="3"><span id="val-n">131k</span></label>
     <label>bounce <input type="range" id="set-rest" min="0.05" max="0.9" step="0.05" value="0.3"><span id="val-rest">0.30</span></label>
-    <label>core <input type="range" id="set-core" min="0" max="45" step="1" value="32"><span id="val-core">32%</span></label>
-    <label>density <input type="range" id="set-dens" min="0.5" max="1.2" step="0.05" value="0.75"><span id="val-dens">0.75 ρ⊕</span></label>
+    <label>core % <input type="range" id="set-core" min="0" max="45" step="1" value="32"><span id="val-core">32</span></label>
+    <label>density ρ⊕ <input type="range" id="set-dens" min="0.5" max="1.2" step="0.05" value="0.75"><span id="val-dens">0.75</span></label>
+    <div class="note">above restarts the run</div>
     <label>exposure <input type="range" id="set-exp" min="0.2" max="4" step="0.1" value="1"><span id="val-exp">1.0</span></label>
     <label>glow <input type="range" id="set-glow" min="0" max="3" step="0.1" value="1"><span id="val-glow">1.0</span></label>
     <label>shading <input type="checkbox" id="set-shade" checked><span id="val-shade">on</span></label>
     <label>stars <input type="checkbox" id="set-stars" checked><span id="val-stars">on</span></label>
-    <div class="note">impactor · angle · speed · spin · bodies · bounce · core · density restart the run</div>
   </div>
 </div>
 </div>
@@ -276,8 +275,10 @@ var PRESETS = {
   shatter: { q: 0.50, angle: 20, vfac: 2.60, dist: 18,  label: 'shatter' }
 };
 // both bodies arrive turning about the orbital axis, prograde, with days of
-// about eight hours — a young planet's; the sliders take either to none, to
-// retrograde, or up to a Ćuk & Stewart 2.6-hour Earth
+// about eight hours — a young planet's. It is a property of the rock, like its
+// density, and it had a slider once; nobody needs to turn Earth's day down to
+// nothing from the panel, so spin0 and spin1 live here (negative is retrograde,
+// ±0.55 is the Ćuk & Stewart 2.6-hour Earth, and maclaurin() cuts the spheroid)
 var S = { q: 0.1, angle: 45, vfac: 1.05, spin0: 0.18, spin1: 0.20, nIdx: 3, rest: 0.3, core: 0.325, dens: 0.75,
           exposure: 1.0, glow: 1.0, shade: true, stars: true, follow: false, speed: 4, preset: 'theia' };
 var COL_TARGET = [0.40, 0.58, 0.90], COL_IMPACTOR = [0.96, 0.55, 0.28];
@@ -2734,13 +2735,6 @@ function fmtTime(t) {
   return 'T+ ' + hh + 'h ' + (mm < 10 ? '0' : '') + mm + 'm';
 }
 function fmtCount(n) { return n >= 1e6 ? (n / 1e6).toFixed(n % 1e6 ? 1 : 0) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n); }
-// a spin as the day it makes: f the fraction of breakup, wb the body's
-// breakup rate in 1/time-unit; negative is retrograde
-function fmtSpin(f, wb) {
-  if (Math.abs(f) < 0.005) return 'none';
-  var h = 2 * Math.PI / (Math.abs(f) * wb) * T_UNIT / 3600;
-  return (f < 0 ? '−' : '') + (h >= 10 ? Math.round(h) : h.toFixed(1)) + ' h';
-}
 var fpsFrames = 0, fpsT0 = performance.now(), fps = 0;
 function hud() {
   var sub = PRESETS[S.preset] ? PRESETS[S.preset].label : 'custom';
@@ -2805,15 +2799,13 @@ function setOn(container, attr, value) {
   container.querySelectorAll('button[' + attr + ']').forEach(function (b) { b.classList.toggle('on', b.getAttribute(attr) === String(value)); });
 }
 function syncSliders() {
-  $('set-q').value = S.q; $('val-q').textContent = S.q.toFixed(2) + ' M⊕';
-  $('set-angle').value = S.angle; $('val-angle').textContent = S.angle + '°';
-  $('set-vfac').value = S.vfac; $('val-vfac').textContent = S.vfac.toFixed(2) + ' v.esc';
-  $('set-spin0').value = S.spin0; $('val-spin0').textContent = fmtSpin(S.spin0, 1);
-  $('set-spin1').value = S.spin1; $('val-spin1').textContent = fmtSpin(S.spin1, Math.sqrt(S.dens));
+  $('set-q').value = S.q; $('val-q').textContent = S.q.toFixed(2);
+  $('set-angle').value = S.angle; $('val-angle').textContent = S.angle;
+  $('set-vfac').value = S.vfac; $('val-vfac').textContent = S.vfac.toFixed(2);
   $('set-n').value = S.nIdx; $('val-n').textContent = N_LABELS[S.nIdx];
   $('set-rest').value = S.rest; $('val-rest').textContent = S.rest.toFixed(2);
-  $('set-core').value = Math.round(S.core * 100); $('val-core').textContent = Math.round(S.core * 100) + '%';
-  $('set-dens').value = S.dens; $('val-dens').textContent = S.dens.toFixed(2) + ' ρ⊕';
+  $('set-core').value = Math.round(S.core * 100); $('val-core').textContent = Math.round(S.core * 100);
+  $('set-dens').value = S.dens; $('val-dens').textContent = S.dens.toFixed(2);
   $('set-exp').value = S.exposure; $('val-exp').textContent = S.exposure.toFixed(1);
   $('set-glow').value = S.glow; $('val-glow').textContent = S.glow.toFixed(1);
   $('val-shade').textContent = S.shade ? 'on' : 'off';
@@ -2850,8 +2842,6 @@ function onRange(id, live, apply, keepPreset) {
 onRange('set-q', null, function (v) { S.q = v; });
 onRange('set-angle', null, function (v) { S.angle = v; });
 onRange('set-vfac', null, function (v) { S.vfac = v; });
-onRange('set-spin0', null, function (v) { S.spin0 = v; }, true);
-onRange('set-spin1', null, function (v) { S.spin1 = v; }, true);
 onRange('set-n', null, function (v) { S.nIdx = v | 0; }, true);
 onRange('set-rest', null, function (v) { S.rest = v; }, true);
 onRange('set-core', null, function (v) { S.core = v / 100; }, true);

@@ -118,6 +118,11 @@ rock glowing by its temperature and lighting everything else. ACES and FXAA.
 
 Broad strokes, newest first; the commit history tells each one in full.
 
+- **2026-08-26 — A shorter panel.** The advanced panel lost its two spin
+  sliders — a spin is a property of the rock, like its density, and both bodies
+  keep the eight-hour day they start with — and says the rest in fewer words:
+  the units moved into the labels, and a rule marks where the settings that
+  restart the run end.
 - **2026-08-26 — Skin.** The bodies are built as onions of Fibonacci shells
   instead of a lattice cut to a sphere, so the concentric rings the crust wore
   in every frame are gone; the pile is relaxed before it settles and settles
