@@ -101,14 +101,15 @@ via the Harvard/SAO catalogue archive. Public domain / free to use with credit.
 Two self-contained pages, no dependencies and no build step. `index.html` is
 WebGL 1: one point-sprite pass, all motion in the vertex shader, exposure
 normalized against particle count and size so those sliders change grain, not
-brightness (10M points is 333 MB of VRAM, so it is opt-in). A body is an onion
-of Fibonacci-spiral shells, crept into equilibrium so the skin has no terracing.
+brightness (10M points is 333 MB of VRAM, so it is opt-in).
 
 `collision.html` is WebGL 2 with no compute shaders to lean on, so the hard
 parts are tricks: contacts from a hashed grid filled by depth-peeling, gravity
 from a 64³ particle mesh with the loose material corrected pairwise against it,
-P³M-style, so moonlets bind instead of smearing. Symplectic Euler, Morton
-order, and books on momentum and energy that caught most of what was wrong. The
+P³M-style, so moonlets bind instead of smearing. Its bodies are onions of
+Fibonacci-spiral shells — a lattice cut to a sphere is terraced, and the skin
+drew every step as a ring — relaxed and then crept into equilibrium so that
+nothing pops out of the surface. Symplectic Euler, Morton order, and books on momentum and energy that caught most of what was wrong. The
 picture is screen-space fluid rendering — impostors, a bilateral blur that melts
 them into a skin, a coverage cut that takes the beads off the limb — with hot
 rock glowing by its temperature and lighting everything else. ACES and FXAA.
