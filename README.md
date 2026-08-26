@@ -150,6 +150,30 @@ when it is raised — 10M particles is 333 MB of VRAM, so it is opt-in. The CPU
 side stages one 25k chunk at a time, which keeps generation off the main thread
 in slices and costs ~2 MB of RAM whatever the count.
 
+A body is an onion: concentric shells a lattice-layer apart, each holding as
+many particles as its own volume is worth, spread over the shell by the
+Fibonacci spiral, each shell turned and flipped at random. The first version
+cut a face-centred cubic lattice to a sphere, and it was terraced — the
+lattice planes meet the surface in steps a particle high, and the skin drew
+every step, so the blue crust wore concentric rings in every frame. An
+onion's outer shell *is* the surface. But a spiral cannot pack a sphere as
+tightly as the plane packs, and the shells are not in registry with one
+another, so the particles land some way inside each other: the pile is first
+relaxed on the CPU with no inertia at all, ten sweeps of pushing every
+overlapping pair apart by half its overlap and letting nothing leave the
+body's own spheroid — a particle that escapes an overlap outward stands proud
+of the skin as a pimple. What overlap is left, a tenth of a particle, is
+about what the weight of the rock above presses out anyway; but at the
+surface the contact spring is a hundred times gravity, and left alone the
+settle fires those particles off like popcorn — the books saw two thousandths
+of an Earth in orbit before the impactor had even arrived. So the settle is a
+creep: damped as before, and with a speed limit, so the pile can only walk to
+its equilibrium. It takes twice as long that way and leaves a tenth of that
+debris. A pile packed at random jams looser
+than a lattice — 64 % of the space against 74 % — so its grains are cut 4 %
+smaller than the lattice's, which is what puts the body back at the radius
+its mass asks for, and back to the binding energy and the books it had.
+
 `collision.html` is WebGL 2, also dependency-free, and has no compute shaders
 or atomics to lean on, so the two hard parts are done with tricks. Contacts:
 a hashed grid of cells one neighbour-radius wide, filled by depth-peeling —
@@ -201,7 +225,14 @@ at rest, was booking its spring's work as heat with either sign.)
 The picture is three screen-space passes borrowed from fluid rendering:
 sphere impostors with per-fragment depth, a bilateral blur two particles wide
 that melts them into a skin without crossing a silhouette, and normals from
-the smoothed depth, lit by one sun. Hot rock adds its own light by its
+the smoothed depth, lit by one sun. That blur can do nothing for the outline,
+which it never reaches across: the silhouette stayed the union of the discs
+drawn at it, a staircase of them, each disc lit like a bead. So the blur
+carries a second, narrower field alongside the depth — how much of the
+neighbourhood the body covers — and the shading cuts the skin where the
+coverage falls under nine tenths and fades the last pixel of it, which takes
+the beads off the limb and leaves a planet's edge. Only a packed surface is
+cut back that far; a lone fragment is all edge, and keeps its own. Hot rock adds its own light by its
 temperature: a Planckian ramp whose brightness levels off, so that the
 40 000 K sparks off the contact and the 1000 K far side both read; what
 comes out brighter than white blooms, a narrow halo and a wide one at a
@@ -234,6 +265,13 @@ result, since the impostors' silhouettes and the stars are points.
 
 Broad strokes, newest first; the commit history tells each one in full.
 
+- **2026-08-26 — Skin.** The bodies are built as onions of Fibonacci shells
+  instead of a lattice cut to a sphere, so the concentric rings the crust wore
+  in every frame are gone; the pile is relaxed before it settles and settles
+  at a creep, so nothing pops out of the surface; the grains are 4 % smaller,
+  since a random pile jams looser than a lattice, which keeps the radius and
+  the books; and the skin's silhouette is cut and feathered by a coverage
+  field, which takes the staircase of lit discs off the limb.
 - **2026-08-26 — The film.** An ACES-style tone curve — deeper shadows, a
   clean roll-off at the hottest — the sun as a disk with a glare that the
   bodies occlude, a light vignette, and FXAA. The knobs live in

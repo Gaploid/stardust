@@ -256,6 +256,12 @@ var T_UNIT = 805, V_UNIT = 7.91;
 var E_KG = 6.256e7;                         // GM⊕/R⊕: the energy unit per kilogram, J/kg
 var CP_ROCK = 1200, CP_IRON = 450;          // heat capacities, J/kg·K — molten silicate, liquid iron
 var L_EM = 0.1163;                          // the Earth–Moon system's angular momentum today, 3.5e34 kg m²/s, in M⊕√(GM⊕R⊕)
+// A lattice of touching spheres fills 74 % of the space; a pile poured at
+// random jams at about 64 %, and the onion the bodies are built as jams a
+// little looser than the lattice it replaces — left at the lattice's radius
+// its particles would stand the body 4 % wide of the radius its mass asks
+// for, and 4 % less bound. The grains are that much smaller instead.
+var JAM = 0.96;
 var N_CHOICES = [16384, 32768, 65536, 131072, 262144];
 var N_LABELS = ['16k', '33k', '65k', '131k', '262k'];
 var SLOTS = 8;                              // body-particles a contact cell can hold
@@ -279,9 +285,11 @@ var COL_TARGET = [0.40, 0.58, 0.90], COL_IMPACTOR = [0.96, 0.55, 0.28];
 // what blooms (brighter than this), and how much of the halo is laid back;
 // then the film: filmic 0 is the old 1 − e^−x, anything else the ACES fit
 // with that much gain in front; vignette is how dark the corners go; the
-// sun's disk radius in radians, its brightness and its glare; fxaa on or off
+// sun's disk radius in radians, its brightness and its glare; fxaa on or off.
+// Then the silhouette: the coverage a packed skin is cut back to and how soft
+// its last pixel is, and how fat a packed particle draws
 var LOOK = { glowT: 12000, white: 40000, bloomThr: 1.0, bloomK: 0.3, magma: 20, reach: 2.0,
-             filmic: 0.7, vignette: 0.35, sunR: 0.006, sunI: 40, halo: 1.0, fxaa: 1 };
+             filmic: 0.7, vignette: 0.35, sunR: 0.006, sunI: 40, halo: 1.0, fxaa: 1, edge: 0.88, edgeSoft: 0.1, fat: 1.3 };
 var lastLights = null;
 // magma: the hot bodies' light on what is next to them, in their own
 // brightness — the real figure is a hundred, a 3000 K surface outshines the
@@ -582,6 +590,7 @@ var SIM_FS = [
   'uniform float uC;',            // contact dashpot
   'uniform float uInvM;',
   'uniform float uDamp;',
+  'uniform float uCreep;',        // the fastest a particle may settle: overlaps left in the packing would otherwise fire it off
   'uniform float uTk;',           // kelvins per unit of heat in a mantle particle
   'uniform float uKappa;',        // how fast touching particles share their heat
   'uniform float uCpIron;',       // iron's heat capacity over the silicates'
@@ -671,7 +680,11 @@ var SIM_FS = [
   '  if (seat >= 0.0) grav += texelFetch(uPPForce, ivec2(int(seat) & 127, int(seat) >> 7), 0).xyz;',
   '  v += push * (uInvM / ri) * uDt + grav * uGDt;',
   '  vec3 vr = cross(body < 3.5 ? uSpin0 : uSpin1, p - (body < 3.5 ? uCen0 : uCen1));',   // the body's spin at p
-  '  if (uSettle > 0.5) v = vr + (v - vr) * uDamp;',                                       // damp everything but that
+  '  if (uSettle > 0.5) {',                                                                    // damp everything but the spin,
+  '    vec3 dv = (v - vr) * uDamp;',                                                           // and let nothing run: a pile
+  '    float sp = length(dv);',                                                                // packed by hand has overlaps in it,
+  '    v = vr + dv * min(1.0, uCreep / max(sp, 1e-9));',                                       // and a deep one is worth escape speed
+  '  }',
   '  if (uKick > 0.5) v = (body < 3.5 ? uBulk0 : uBulk1) + vr;',
   // the heat: what the contacts dissipate stays in the material — nothing
   // radiates it away in hours — and spreads by contact; the settling's is
@@ -960,6 +973,7 @@ var G_VS = [
   'uniform float uRad;',
   'uniform float uPx;',
   'uniform float uMaxPt;',
+  'uniform float uFat;',
   'uniform vec3 uCol0;',
   'uniform vec3 uCol1;',
   GLSL_MATCOL,
@@ -973,7 +987,7 @@ var G_VS = [
   '  vec4 e = uView * vec4(P.xyz, 1.0);',
   '  vNb = texelFetch(uAux, tc, 0).w;',
   '  vZc = e.z;',
-  '  vR = uRad * mix(1.0, 1.25, smoothstep(0.0, 6.0, vNb));',   // packed particles run fat, so the skin has no gaps
+  '  vR = uRad * mix(1.0, uFat, smoothstep(0.0, 6.0, vNb));',    // packed particles run fat, so the skin has no gaps
   '  vMat = vec4(matColor(P.w, uCol0, uCol1), texelFetch(uVel, tc, 0).w);',
   '  gl_Position = uProj * e;',
   '  gl_PointSize = clamp(2.1 * vR * uPx / max(-e.z, 0.05), 1.0, uMaxPt);',
@@ -990,7 +1004,7 @@ var G_FS = [
   'in float vNb;',
   'in vec4 vMat;',
   'layout(location = 0) out vec4 oMat;',
-  'layout(location = 1) out vec4 oDep;',   // r — view depth, g — neighbours
+  'layout(location = 1) out vec4 oDep;',   // r — view depth, g — neighbours, and in its fraction the coverage: 1 wherever a particle drew
   'void main() {',
   '  vec2 d = gl_PointCoord * 2.0 - 1.0;',
   '  float r2 = dot(d, d);',
@@ -998,7 +1012,7 @@ var G_FS = [
   '  float ze = min(vZc + vR * sqrt(1.0 - r2), -0.05);',
   '  gl_FragDepth = ((uP22 * ze + uP32) / (-ze)) * 0.5 + 0.5;',
   '  oMat = vMat;',
-  '  oDep = vec4(-ze, vNb, 0.0, 1.0);',
+  '  oDep = vec4(-ze, vNb + 0.999, 0.0, 1.0);',
   '}'
 ].join('\n');
 
@@ -1018,9 +1032,19 @@ var BLUR_FS = [
   'void main() {',
   '  ivec2 me = ivec2(gl_FragCoord.xy);',
   '  vec2 d0 = texelFetch(uDep, me, 0).rg;',
-  '  float z0 = d0.r;',
-  '  if (z0 <= 0.0) { oMat = vec4(0.0); oDep = vec4(0.0); return; }',
-  '  float sig = (float(uTaps) * uStep * 0.5 + 0.5) * max(smoothstep(1.0, 5.0, d0.g), 0.05);',   // loners and small clumps keep their shape
+  '  float z0 = d0.r, nb = floor(d0.g);',
+  '  float sigc = float(uTaps) * uStep * 0.18 + 0.5;',
+  '  int ct = min(uTaps, int(ceil(2.5 * sigc / uStep)));',                                      // its own reach, narrower than the depth blur's
+  '  float cw = 0.0, cs = 0.0;',
+  '  for (int i = -ct; i <= ct; i++) {',
+  '    float x = float(i) * uStep;',
+  '    ivec2 c = clamp(me + uDir * int(round(x)), ivec2(0), uRes - 1);',
+  '    float g = exp(-x * x / (2.0 * sigc * sigc));',
+  '    cw += g; cs += g * fract(texelFetch(uDep, c, 0).g);',
+  '  }',
+  '  float cov = cs / cw * 0.999;',
+  '  if (z0 <= 0.0) { oMat = vec4(0.0); oDep = vec4(0.0, cov, 0.0, 1.0); return; }',
+  '  float sig = (float(uTaps) * uStep * 0.5 + 0.5) * max(smoothstep(1.0, 5.0, nb), 0.05);',   // loners and small clumps keep their shape
   '  float ws = 0.0, zs = 0.0;',
   '  vec4 ms = vec4(0.0);',
   '  for (int i = -uTaps; i <= uTaps; i++) {',
@@ -1032,7 +1056,7 @@ var BLUR_FS = [
   '    float w = exp(-x * x / (2.0 * sig * sig) - dz * dz);',
   '    ws += w; zs += w * z; ms += w * texelFetch(uMat, c, 0);',
   '  }',
-  '  oDep = vec4(zs / ws, d0.g, 0.0, 1.0);',
+  '  oDep = vec4(zs / ws, nb + cov, 0.0, 1.0);',
   '  oMat = ms / ws;',
   '}'
 ].join('\n');
@@ -1055,6 +1079,8 @@ var SHADE_FS = [
   'uniform vec3 uLCol[2];',     // the light at their surface
   'uniform float uLR2[2];',     // their radius²
   'uniform float uReach2;',     // the fall-off, 1/(d²/R² + reach²): inverse-square far off, kept from blowing up close in
+  'uniform float uEdge;',       // where the silhouette ends, in coverage, and how soft its last pixel is
+  'uniform float uEdgeSoft;',
   'uniform float uDbg;',        // LOOK.dbg: 1 the ember alone, 2 the particle normal, 3 the direction to the first light, 4 the skin normal
   'uniform int uNO;',           // what casts shadows in that light, as balls: the planet, the impactor while it is one, the second body
   'uniform vec4 uOcc[3];',      // centre in eye space, radius
@@ -1102,8 +1128,17 @@ var SHADE_FS = [
   '}',
   'void main() {',
   '  ivec2 me = ivec2(gl_FragCoord.xy);',
-  '  float z = texelFetch(uDep, me, 0).r;',
+  '  vec2 d = texelFetch(uDep, me, 0).rg;',
+  '  float z = d.r;',
   '  if (z <= 0.0) discard;',
+  // the outline: the skin's silhouette is the union of the discs drawn at it,
+  // a staircase of them, and the blur cannot help — it never reaches across
+  // into the background. The coverage can: the tips of the discs stand under
+  // it and are cut, the rest of the edge fades over its last pixel instead of
+  // stepping. Only a packed surface is cut back: a lone fragment is all edge
+  '  float cut = mix(0.5, uEdge, smoothstep(2.0, 6.0, floor(d.g)));',
+  '  float alpha = smoothstep(cut - uEdgeSoft, cut + uEdgeSoft, fract(d.g));',
+  '  if (alpha <= 0.0) discard;',
   '  vec3 p = posAt(uDep, me);',
   '  bool edge, edgeR;',
   '  vec3 n = normalAt(uDep, me, p, edge);',                            // the skin's
@@ -1126,7 +1161,7 @@ var SHADE_FS = [
   '  }',
   '  gl_FragDepth = ((uP22 * (-z) + uP32) / z) * 0.5 + 0.5;',
   '  if (uDbg > 0.5) { vec3 lh0 = normalize(uLPos[0] - p); o = vec4(uDbg < 1.5 ? ember : uDbg < 2.5 ? nR * 0.5 + 0.5 : uDbg < 3.5 ? lh0 * 0.5 + 0.5 : n * 0.5 + 0.5, 1.0); return; }',
-  '  o = vec4(alb * (lit + ember) + glow(m.a) * uGlow, 1.0);',
+  '  o = vec4(alb * (lit + ember) + glow(m.a) * uGlow, alpha);',
   '}'
 ].join('\n');
 
@@ -1488,15 +1523,6 @@ function mulberry(seed) {
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
 }
-function randRot(rng) {
-  // uniform random rotation from a random unit quaternion
-  var u1 = rng(), u2 = rng() * 6.2831853, u3 = rng() * 6.2831853;
-  var a = Math.sqrt(1 - u1), b = Math.sqrt(u1);
-  var x = a * Math.sin(u2), y = a * Math.cos(u2), z = b * Math.sin(u3), w = b * Math.cos(u3);
-  return [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
-          2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
-          2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)];
-}
 // The mesh's own force between two particles by their distance, for the
 // pairwise pass to subtract. The two are put on the grid (a random offset, a
 // random direction) and the mesh's arithmetic is repeated here — cloud-in-cell
@@ -1581,32 +1607,133 @@ function mul(a, b) {
 }
 
 // ---------- building a run ----------
-// A body is a face-centred cubic lattice clipped to a sphere — or, if it
-// spins, to the Maclaurin spheroid of eccentricity e that is a spinning
-// fluid's equilibrium: n lattice points nearest the centre in the spheroid's
-// own measure, spacing set by Earth density, a little jitter so nothing lines
-// up. Gravity then settles it for a third of a time unit before the kick.
-function ball(n, s, rng, e) {
+// A body is an onion: concentric shells, each holding as many particles as
+// its own volume is worth, laid out over the shell by the Fibonacci spiral.
+// A lattice cut to a sphere was tried first and is terraced — its planes meet
+// the surface in steps a particle high, and the skin draws every step as a
+// ring — where an onion's outer shell IS the surface, even at the particle
+// scale. A spinning body is cut as the Maclaurin spheroid of eccentricity e
+// that is a spinning fluid's equilibrium: its shells are the spheroids
+// (ae − t, ce − t), each sampled evenly by area over the reduced latitude,
+// turned and flipped at random so no two line up, with a little jitter on
+// top. Shells smaller than their own thickness would crowd their particles
+// closer than a diameter, so the innermost few are scattered through a seed
+// of the shape the shells leave — a ball, or a lens when the body is one.
+// The points come out sorted inside-out, with each shell's first index in
+// .bounds so the core and the crust can be whole shells.
+function ball(n, s, a, rng, e) {
   var R = Math.cbrt(3 * n * s * s * s / (16 * Math.PI));
   var ae = R / Math.pow(1 - e * e, 1 / 6), ce = ae * Math.sqrt(1 - e * e);   // a²c = R³: the volume is the sphere's
-  var lim = Math.ceil(ae * 1.2 / s) + 1, ia2 = 1 / (ae * ae), ic2 = 1 / (ce * ce), jit = 0.06 * s;
-  var rot = randRot(rng);
-  var basis = [0, 0, 0, 0.5, 0.5, 0, 0.5, 0, 0.5, 0, 0.5, 0.5];
-  var pts = [];
-  for (var i = -lim; i <= lim; i++) for (var j = -lim; j <= lim; j++) for (var k = -lim; k <= lim; k++) for (var b = 0; b < 4; b++) {
-    var x = (i + basis[b * 3]) * s + (rng() - 0.5) * jit;
-    var y = (j + basis[b * 3 + 1]) * s + (rng() - 0.5) * jit;
-    var z = (k + basis[b * 3 + 2]) * s + (rng() - 0.5) * jit;
-    var rx = rot[0] * x + rot[1] * y + rot[2] * z, ry = rot[3] * x + rot[4] * y + rot[5] * z, rz = rot[6] * x + rot[7] * y + rot[8] * z;
-    var d2 = (rx * rx + rz * rz) * ia2 + ry * ry * ic2;
-    if (d2 < 1.44) pts.push(d2, rx, ry, rz);
+  var vp = s * s * s / 4, unit = 3 * vp / (4 * Math.PI), jit = 0.06 * s;
+  var h = s * Math.sqrt(1 / 3);                              // shell spacing: the layer spacing of the lattice this replaces
+  var K = Math.max(1, Math.round(ce / h)), GA = Math.PI * (3 - Math.sqrt(5)), NB = 256;
+  h = ce / K;
+  var shells = [], total = 0, kept = 0, j, b;
+  for (j = 0; j < K; j++) {                                  // outermost first
+    var A = ae - j * h, C = ce - j * h;
+    if (C - h * 0.5 < h) break;                              // too small to be a shell
+    var Am = A - h * 0.5, Cm = C - h * 0.5;
+    var cum = new Float64Array(NB + 1);                      // area from the south pole up, by reduced latitude
+    for (b = 0; b < NB; b++) {
+      var be = (b + 0.5) * Math.PI / NB - Math.PI / 2, cb = Math.cos(be), sb = Math.sin(be);
+      cum[b + 1] = cum[b] + Am * cb * Math.sqrt(Cm * Cm * cb * cb + Am * Am * sb * sb);
+    }
+    var want = (A * A * C - (A - h) * (A - h) * (C - h)) / unit;
+    shells.push({ A: Am, C: Cm, cum: cum, want: want });
+    total += want;
+    kept = j + 1;
   }
-  var cnt = pts.length / 4, idx = new Array(cnt);
-  for (i = 0; i < cnt; i++) idx[i] = i;
-  idx.sort(function (p, q) { return pts[p * 4] - pts[q * 4]; });
-  var out = new Float32Array(n * 3);
-  for (i = 0; i < n; i++) { var p = idx[i] * 4; out[i * 3] = pts[p + 1]; out[i * 3 + 1] = pts[p + 2]; out[i * 3 + 2] = pts[p + 3]; }
+  var As = ae - kept * h, Cs = ce - kept * h;
+  total += Math.max(As * As * Cs, 0) / unit;                 // and the seed's share
+  var out = new Float32Array(n * 3), bounds = [n], i = n, acc = 0;
+  for (j = 0; j < shells.length; j++) {
+    var sh = shells[j];
+    acc += sh.want * n / total;
+    var m = Math.min(Math.min(Math.round(acc), n) - (n - i), i), lo = i - m;
+    var phi0 = rng() * 2 * Math.PI, flip = rng() < 0.5 ? -1 : 1;
+    for (var q = 0, bb = 0; q < m; q++) {
+      var u = (q + 0.5) / m * sh.cum[NB];
+      while (bb < NB - 1 && sh.cum[bb + 1] < u) bb++;
+      var lat = (bb + (u - sh.cum[bb]) / (sh.cum[bb + 1] - sh.cum[bb])) * Math.PI / NB - Math.PI / 2;
+      var phi = phi0 + q * GA, rc = sh.A * Math.cos(lat), o = (lo + q) * 3;
+      out[o] = rc * Math.cos(phi) + (rng() - 0.5) * jit;
+      out[o + 1] = flip * sh.C * Math.sin(lat) + (rng() - 0.5) * jit;
+      out[o + 2] = rc * Math.sin(phi) + (rng() - 0.5) * jit;
+    }
+    i = lo;
+    bounds.push(lo);
+  }
+  var lam = Math.cbrt(i * vp / Math.max(4 / 3 * Math.PI * As * As * Cs, 1e-12));   // the seed keeps the leftover's shape — flat when the body is
+  for (var k = 0; k < i; k++) {                              // the last few, at the right density, anywhere inside it
+    var ux, uy, uz, u2;
+    do { ux = rng() * 2 - 1; uy = rng() * 2 - 1; uz = rng() * 2 - 1; u2 = ux * ux + uy * uy + uz * uz; } while (u2 > 1);
+    out[k * 3] = ux * As * lam; out[k * 3 + 1] = uy * Cs * lam; out[k * 3 + 2] = uz * As * lam;
+  }
+  bounds.push(0);
+  bounds.reverse();
+  out.bounds = bounds;
+  out.relax = relax(out, n, a, ae - h * 0.5, ce - h * 0.5);
   return out;
+}
+
+// The shells are not in registry, and a spiral cannot pack a sphere as
+// tightly as the plane packs: particles land some way inside each other, and
+// at the surface the contact spring is a hundred times gravity — left to the
+// settle those overlaps would fire particles off like popcorn. So the pile is
+// relaxed first, with no inertia at all: every pair closer than the target is
+// pushed apart by half its overlap, sweep after sweep over a cell grid. A
+// target a little under a diameter keeps the pile at the radius its mass asks
+// for — the mean overlap left, a tenth of a particle, is about what the weight
+// of the rock above presses out anyway. Nothing may leave the body's own
+// spheroid on the way: at a free surface the only way out of an overlap is
+// outward, and a particle that takes it stands proud of the skin as a pimple
+// — held in, the crowd goes sideways instead and the surface stays a surface.
+var RELAX_SWEEPS = 10, RELAX_TARGET = 0.96, RELAX_REGRID = 4;
+function relax(p, n, a, A, C) {
+  var D = 2 * a * RELAX_TARGET, cs = 2.2 * a, i, j, k, o, q, iA2 = 1 / (A * A), iC2 = 1 / (C * C);
+  var lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
+  for (i = 0; i < n; i++) for (k = 0; k < 3; k++) { var v = p[i * 3 + k]; if (v < lo[k]) lo[k] = v; if (v > hi[k]) hi[k] = v; }
+  var gx = Math.floor((hi[0] - lo[0]) / cs) + 3, gy = Math.floor((hi[1] - lo[1]) / cs) + 3, gz = Math.floor((hi[2] - lo[2]) / cs) + 3, nc = gx * gy * gz;
+  var start = new Int32Array(nc + 1), order = new Int32Array(n), cell = new Int32Array(n), worst = 0, sweep;
+  for (sweep = 0; sweep < RELAX_SWEEPS; sweep++) {
+    if (sweep % RELAX_REGRID === 0) {                        // the pile barely moves: the grid keeps for a few sweeps
+      start.fill(0);
+      for (i = 0; i < n; i++) {
+        var cx = Math.min(Math.max(Math.floor((p[i * 3] - lo[0]) / cs) + 1, 0), gx - 1);
+        var cy = Math.min(Math.max(Math.floor((p[i * 3 + 1] - lo[1]) / cs) + 1, 0), gy - 1);
+        var cz = Math.min(Math.max(Math.floor((p[i * 3 + 2] - lo[2]) / cs) + 1, 0), gz - 1);
+        cell[i] = (cx * gy + cy) * gz + cz;
+        start[cell[i] + 1]++;
+      }
+      for (k = 0; k < nc; k++) start[k + 1] += start[k];
+      for (i = 0; i < n; i++) order[start[cell[i]]++] = i;
+      for (k = nc; k > 0; k--) start[k] = start[k - 1];
+      start[0] = 0;
+    }
+    worst = 0;
+    for (i = 0; i < n; i++) {
+      var c = cell[i], x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2];
+      for (o = 0; o < 27; o++) {
+        var cc = c + ((o % 3) - 1) * gy * gz + ((Math.floor(o / 3) % 3) - 1) * gz + (Math.floor(o / 9) - 1);
+        if (cc < 0 || cc >= nc) continue;
+        for (q = start[cc]; q < start[cc + 1]; q++) {
+          j = order[q];
+          if (j <= i) continue;
+          var dx = p[j * 3] - x, dy = p[j * 3 + 1] - y, dz = p[j * 3 + 2] - z, d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 >= D * D) continue;
+          var d = Math.sqrt(d2) || 1e-9, ov = D - d, mv = 0.5 * ov / d;
+          if (ov > worst) worst = ov;
+          dx *= mv; dy *= mv; dz *= mv;
+          x -= dx; y -= dy; z -= dz;
+          p[j * 3] += dx; p[j * 3 + 1] += dy; p[j * 3 + 2] += dz;
+        }
+      }
+      var qq = (x * x + z * z) * iA2 + y * y * iC2;
+      if (qq > 1.0) { var f = 1 / Math.sqrt(qq); x *= f; y *= f; z *= f; }
+      p[i * 3] = x; p[i * 3 + 1] = y; p[i * 3 + 2] = z;
+    }
+  }
+  return { sweeps: sweep, worst: worst / a };
 }
 
 // The Maclaurin spheroid: a uniform fluid spinning at the fraction f of its
@@ -1647,8 +1774,8 @@ function build() {
   // its density, and the lattice spacing from the volume each particle gets.
   var V1 = 1, V2 = q / dens;
   var vp = (V1 + V2) / N;
-  var s = Math.cbrt(16 * Math.PI * vp / 3);            // FCC cell edge
-  var a = s / (2 * Math.SQRT2);                        // body-particle radius: nearest neighbours touch
+  var s = Math.cbrt(16 * Math.PI * vp / 3);            // the FCC cell edge that gives that volume: the unit of spacing
+  var a = JAM * s / (2 * Math.SQRT2);                  // body-particle radius: see JAM
   var n1 = Math.round(N * V1 / (V1 + V2)), n2 = N - n1;
   if (n2 < 16) { n2 = 16; n1 = N - n2; }
   var R1 = Math.cbrt(V1), R2 = Math.cbrt(V2), Rsum = R1 + R2;
@@ -1659,16 +1786,17 @@ function build() {
   var e1 = maclaurin(Math.abs(S.spin0)), e2 = maclaurin(Math.abs(S.spin1));
   var Re1 = R1 / Math.pow(1 - e1 * e1, 1 / 6), Re2 = R2 / Math.pow(1 - e2 * e2, 1 / 6);   // equatorial radii
 
-  // layers by radius — the lattice comes out sorted inside-out: the innermost
-  // coreV of the volume is core, the outer particle-and-a-bit crust, the rest
-  // mantle. Mass is relative to an Earth-mantle particle: core ×2.5, the
-  // impactor's ×its density.
+  // layers by shell — the onion comes out sorted inside-out: the innermost
+  // shells nearest coreV of the volume are core, the outer shell crust, the
+  // rest mantle. Mass is relative to an Earth-mantle particle: core ×2.5,
+  // the impactor's ×its density.
   var rng = mulberry(1234567);
-  var b1 = ball(n1, s, rng, e1), b2 = ball(n2, s, rng, e2);
+  var b1 = ball(n1, s, a, rng, e1), b2 = ball(n2, s, a, rng, e2);
   var pos = new Float32Array(N * 4), vel = new Float32Array(N * 4);
   var matR = new Float32Array(N), lay = new Uint8Array(N);
-  function layers(off, n, R, densB) {
-    var nCore = Math.round(coreV * n), nCrust = Math.round(n * (1 - Math.pow(Math.max(0, 1 - 2.2 * a / R), 3)));
+  function layers(off, n, bounds, densB) {
+    var nCore = bounds.reduce(function (best, c) { return Math.abs(c - coreV * n) < Math.abs(best - coreV * n) ? c : best; }, 0);
+    var nCrust = n - bounds[bounds.length - 2];
     var sum = 0;
     for (var j = 0; j < n; j++) {
       var layer = j < nCore ? 0 : j >= n - nCrust ? 2 : 1;
@@ -1678,7 +1806,7 @@ function build() {
     }
     return sum;
   }
-  var sum1 = layers(0, n1, R1, 1), sum2 = layers(n1, n2, R2, dens);
+  var sum1 = layers(0, n1, b1.bounds, 1), sum2 = layers(n1, n2, b2.bounds, dens);
   var mref = 1 / sum1;                                 // an Earth-mantle particle: Earth weighs 1
   var M1 = 1, M2 = mref * sum2, M = M1 + M2;
 
@@ -1711,10 +1839,10 @@ function build() {
   if (sim) { freeTarget(sim.src); freeTarget(sim.dst); gl.deleteTexture(sim.mat); gl.deleteTexture(sim.diag); gl.deleteFramebuffer(sim.diagFbo); gl.deleteTexture(sim.perm); }
   var G = N >= 65536 ? 128 : 64;
   if (!grid || grid.G !== G) { freeGrid(grid); grid = makeGrid(G); }
-  var settle = Math.ceil(0.3 / dt);
+  var settle = Math.ceil(0.6 / dt);
   sim = {
     N: N, W: W, H: H, n1: n1, n2: n2, m: mref, a: a, cell: 2.6 * a, dt: dt, k: k, c: cd,
-    R1: R1, R2: R2, Re1: Re1, Re2: Re2, M1: M1, M2: M2, M: M, rel: rel, bulk0: bulk0, bulk1: bulk1, vc: vc, vesc: vesc,
+    creep: 0.12, R1: R1, R2: R2, Re1: Re1, Re2: Re2, M1: M1, M2: M2, M: M, rel: rel, bulk0: bulk0, bulk1: bulk1, vc: vc, vesc: vesc,
     spin0: w0, spin1: w1, cen0: c1, cen1: c2,
     src: simTarget(W, H, pos, vel), dst: simTarget(W, H, null, null),
     mat: floatTex(W, H, matR, gl.R32F, gl.FLOAT, gl.RED), matR: matR,
@@ -1801,6 +1929,7 @@ function setStaticUniforms() {
   gl.uniform1f(u.uC, sim.c);
   gl.uniform1f(u.uInvM, 1 / sim.m);
   gl.uniform1f(u.uDamp, sim.damp);
+  gl.uniform1f(u.uCreep, sim.creep);
   gl.uniform1f(u.uTk, sim.tK);
   gl.uniform1f(u.uKappa, sim.kappa);
   gl.uniform1f(u.uCpIron, CP_IRON / CP_ROCK);
@@ -1993,7 +2122,7 @@ function settleSome(n) {
   n = Math.min(n, sim.settleLeft);
   for (var i = 0; i < n; i++) step(true, false);
   sim.settleLeft -= n;
-  if (sim.settleLeft === 0) sim.phase = 'approach';
+  if (sim.settleLeft === 0) { sim.phase = 'approach'; analyzedAt = sim.stepNo; }   // the settle's steps are not the analysis's to count
 }
 
 // the approach: the two-body problem, leapfrog on the CPU, the bodies carried
@@ -2250,7 +2379,13 @@ try {
 } catch (e) { worker = null; }
 function applyReport(r) {
   report = r; sim.com1 = r.com;
-  if (!sim.ref) sim.ref = { E: r.KE + r.PE + r.EL, EQ: r.KE + r.PE + r.EL + r.Q, L: r.L };   // the books at the first look, settled and on approach
+  // the books at the first look at a body that is under way — settled, and
+  // carried by the approach. On the frame the settle ends the bodies are
+  // still at rest, and a reference taken there would be missing the whole
+  // orbit: the angular momentum would read a hundred and eighty per cent up
+  // ever after
+  var going = sim.phase === 'full' || sim.bulk0[0] !== 0 || sim.bulk0[1] !== 0 || sim.bulk0[2] !== 0;
+  if (!sim.ref && going) sim.ref = { E: r.KE + r.PE + r.EL, EQ: r.KE + r.PE + r.EL + r.Q, L: r.L };
   if (r.perm) applyPerm(r.perm);
   setPP(r.pp);
 }
@@ -2420,6 +2555,7 @@ function render() {
     gl.uniform1f(g.uRad, sim.a);
     gl.uniform1f(g.uPx, px);
     gl.uniform1f(g.uMaxPt, MAX_POINT);
+    gl.uniform1f(g.uFat, LOOK.fat);
     gl.uniform1f(g.uP22, proj[10]);
     gl.uniform1f(g.uP32, proj[14]);
     gl.uniform3fv(g.uCol0, COL_TARGET);
@@ -2460,6 +2596,7 @@ function render() {
   if (sim) {
     var s = shadeProg.u;
     gl.depthFunc(gl.ALWAYS);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(shadeProg.p);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, blurB.mat);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, blurB.dep);
@@ -2505,10 +2642,12 @@ function render() {
     gl.uniform1i(s.uNL, nl);
     gl.uniform3fv(s['uLPos[0]'], lp); gl.uniform3fv(s['uLCol[0]'], lc); gl.uniform1fv(s['uLR2[0]'], lr);
     gl.uniform1f(s.uReach2, LOOK.reach * LOOK.reach);
+    gl.uniform1f(s.uEdge, LOOK.edge); gl.uniform1f(s.uEdgeSoft, LOOK.edgeSoft);
     gl.uniform1f(s.uDbg, LOOK.dbg || 0);
     gl.uniform1f(s.uP22, proj[10]);
     gl.uniform1f(s.uP32, proj[14]);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.disable(gl.BLEND);
   }
   gl.depthFunc(gl.LESS);
   gl.depthMask(false);
@@ -2635,7 +2774,7 @@ function frame() {
   requestAnimationFrame(frame);
   resize();
   if (sim) {
-    if (sim.phase === 'settle') settleSome(Math.max(2, Math.round(65536 / sim.N * 8)));
+    if (sim.phase === 'settle') settleSome(Math.max(2, Math.round(65536 / sim.N * 16)));   // twice the steps a frame: the settle is twice as long as it was, and it is the first thing anyone sees
     else if (!paused) {
       if (sim.phase === 'approach') rigidStep(0.0025 * S.speed);
       else {
