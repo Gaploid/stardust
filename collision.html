@@ -1500,7 +1500,7 @@ function build() {
     mat: floatTex(W, H, matR, gl.R32F, gl.FLOAT, gl.RED), matR: matR,
     diag: floatTex(W, H, null), ref: null,
     t: 0, phase: 'settle', settleLeft: settle, settleTotal: settle, impactT: -1, com1: [0, 0, 0], stepNo: 0,
-    damp: Math.exp(-dt * 12), cool: Math.exp(-dt / 12), heatK: 0.7 / mref, gen: ++gen
+    damp: Math.exp(-dt * 12), cool: Math.exp(-dt / 12), heatK: 0.7 / mref, soft: false, gen: ++gen
   };
   sim.diagFbo = fboFor(sim.diag);
   if (!pbo) pbo = [gl.createBuffer(), gl.createBuffer()];
@@ -1737,7 +1737,20 @@ function passPP() {
 // and a turning body feeling its own field a little behind it is braked by it
 // like by a tide (0.4 % of the angular momentum in six time units).
 var MESH_EVERY = 8;
+// The spring was sized for the impact speed. An hour and a half past first
+// touch the splash is over and relative speeds are a fraction of it, so the
+// spring is let go to half its stiffness — the dashpot with it, so bounces
+// stay the same — and the step, set by the spring's period, grows by √2. A
+// body at rest overlaps 2 % of a radius instead of 1; a re-impact at a
+// third of the impact speed overlaps what the impact did.
+function soften() {
+  sim.soft = true;
+  sim.k *= 0.5; sim.c *= Math.SQRT1_2; sim.dt *= Math.SQRT2;
+  sim.damp = Math.exp(-sim.dt * 12); sim.cool = Math.exp(-sim.dt / 12);
+  setStaticUniforms();
+}
 function step(settle, kick) {
+  if (!settle && !kick && !sim.soft && sim.t - sim.impactT > 1.5) soften();
   var n = sim.stepNo++;
   if (n % 2 === 0) passSlots();
   var mesh = n % MESH_EVERY === 0;

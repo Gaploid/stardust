@@ -176,7 +176,11 @@ eighth (gravity changes on the scale of a time unit, a step is a thousandth of
 one), which halves the cost of a step without changing a digit of the result.
 Every few thousand steps the particles are put back in spatial (Morton)
 order — every per-particle texture relabelled, nothing else — so that a
-particle's neighbours are its neighbours in memory too.
+particle's neighbours are its neighbours in memory too. The spring is sized
+for the impact speed; an hour and a half past first touch the splash is
+over, the spring is let go to half its stiffness (the dashpot with it, so
+bounces stay the same) and the step, set by the spring's period, grows by
+√2 — a body at rest then overlaps 2 % of a radius instead of 1.
 The mesh's pull is given all at once, on the step it is measured, as the
 impulse for the eight steps it stands for: held for those steps instead it
 lags, and a turning body feeling its own field a little behind it is braked
@@ -198,6 +202,11 @@ its disk and to keep the books.
 
 Broad strokes, newest first; the commit history tells each one in full.
 
+- **2026-08-26 — Faster.** A step at 131k from 2.5 ms to 1.4, and 4× runs at
+  30 fps instead of 19: empty mesh blocks skipped, the mesh every eighth
+  step, the particles kept in spatial order, the analysis read back without
+  waiting, the spring let go after the splash. And the mesh deposit was
+  losing 2 % of the mass to half-float rounding; it blends in full floats.
 - **2026-08-26 — Dust, gone.** The points that rode on the particles never
   read as anything but noise; the skin is the body.
 - **2026-08-26 — The disk binds.** Moonlets came apart into puffs: a cell
