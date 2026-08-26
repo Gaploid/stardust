@@ -33,8 +33,8 @@ Drag rotates · Space scatters · wheel zooms.
 The impact simulation — two planets of real mass colliding under their own
 gravity, from the canonical Moon-forming impact to a hit-and-run — grew into a
 project of its own and moved out on 2026-08-26:
-**[Cosmic Collisions](https://github.com/Gaploid/cosmic_collisions)**, live at
-https://gaploid.github.io/cosmic_collisions/.
+**[Cosmic Collisions](https://github.com/Gaploid/cosmic-collisions)**, live at
+https://gaploid.github.io/cosmic-collisions/.
 
 ## Data sources
 
@@ -99,7 +99,7 @@ brightness (10M points is 333 MB of VRAM, so it is opt-in).
 Broad strokes, newest first; the commit history tells each one in full.
 
 - **2026-08-26 — Impact moves out.** The second page became a project of its
-  own and left for [Cosmic Collisions](https://github.com/Gaploid/cosmic_collisions),
+  own and left for [Cosmic Collisions](https://github.com/Gaploid/cosmic-collisions),
   with its history; what stays here is the animation.
 - **2026-08-25 — A brighter sky.** The catalogue stars get a steeper magnitude
   curve and glows on the bright few, on by default.
