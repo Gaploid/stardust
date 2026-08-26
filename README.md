@@ -171,10 +171,10 @@ on the CPU with the planets carried rigid, so the expensive part starts at
 first touch. Symplectic Euler, a step set by the contact spring's period; the
 cells are rebuilt every other step (a particle moves under a fifth of a radius
 a step, the search radius has more than half to spare) and the mesh every
-fourth (gravity changes on the scale of a time unit, a step is a thousandth of
+eighth (gravity changes on the scale of a time unit, a step is a thousandth of
 one), which halves the cost of a step without changing a digit of the result.
 The mesh's pull is given all at once, on the step it is measured, as the
-impulse for the four steps it stands for: held for four steps instead it
+impulse for the eight steps it stands for: held for those steps instead it
 lags, and a turning body feeling its own field a little behind it is braked
 by it like by a tide — 0.4 % of the angular momentum in six time units,
 which the books caught; as an impulse it keeps L to 0.01 % over nine hours.

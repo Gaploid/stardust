@@ -1684,13 +1684,13 @@ function passPP() {
 
 // One step. The contact cells are rebuilt every other step — a particle moves
 // under 0.2 radii a step and the search radius has 0.6 to spare — and the
-// gravity mesh every fourth: gravity changes on the scale of a time unit, a
+// gravity mesh every eighth: gravity changes on the scale of a time unit, a
 // step is a thousandth of one. The mesh's pull is given all at once, on the
 // step it is measured, as the impulse for the steps it stands for: used where
 // it was measured it is time-symmetric, whereas held for four steps it lags —
 // and a turning body feeling its own field a little behind it is braked by it
 // like by a tide (0.4 % of the angular momentum in six time units).
-var MESH_EVERY = 4;
+var MESH_EVERY = 8;
 function step(settle, kick) {
   var n = sim.stepNo++;
   if (n % 2 === 0) passSlots();
