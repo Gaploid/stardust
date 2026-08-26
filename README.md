@@ -223,10 +223,21 @@ reads the positions back every second or so — through pack buffers and a
 fence, so the frame never waits on the GPU for it — to tell the planet from
 its disk and to keep the books.
 
+The frame ends the way a photograph would. An ACES-style curve replaces the
+old 1 − e^−x: the shadows go dark and the hottest roll off to white on a
+shoulder instead of clipping flat. The sun itself is in the sky — a disk with
+a glare where the light comes from, drawn behind the bodies so they hide it
+and its glare stops at their limb. A light vignette, and FXAA over the
+result, since the impostors' silhouettes and the stars are points.
+
 ## Changelog
 
 Broad strokes, newest first; the commit history tells each one in full.
 
+- **2026-08-26 — The film.** An ACES-style tone curve — deeper shadows, a
+  clean roll-off at the hottest — the sun as a disk with a glare that the
+  bodies occlude, a light vignette, and FXAA. The knobs live in
+  `__impact.look`.
 - **2026-08-26 — Lit by the magma.** The planet and the second body light
   what is near them with the glow of their own surface: the arm and the
   disk get their planet-facing sides in orange, a moonlet is lit from

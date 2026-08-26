@@ -276,8 +276,12 @@ var S = { q: 0.1, angle: 45, vfac: 1.05, spin0: 0.18, spin1: 0.20, nIdx: 3, rest
           exposure: 1.0, glow: 1.0, shade: true, stars: true, follow: false, speed: 4, preset: 'theia' };
 var COL_TARGET = [0.40, 0.58, 0.90], COL_IMPACTOR = [0.96, 0.55, 0.28];
 // the look of the heat: the glow's brightness scale and white point in K,
-// what blooms (brighter than this), and how much of the halo is laid back
-var LOOK = { glowT: 12000, white: 40000, bloomThr: 1.0, bloomK: 0.3, magma: 20, reach: 2.0 };
+// what blooms (brighter than this), and how much of the halo is laid back;
+// then the film: filmic 0 is the old 1 − e^−x, anything else the ACES fit
+// with that much gain in front; vignette is how dark the corners go; the
+// sun's disk radius in radians, its brightness and its glare; fxaa on or off
+var LOOK = { glowT: 12000, white: 40000, bloomThr: 1.0, bloomK: 0.3, magma: 20, reach: 2.0,
+             filmic: 0.7, vignette: 0.35, sunR: 0.006, sunI: 40, halo: 1.0, fxaa: 1 };
 var lastLights = null;
 // magma: the hot bodies' light on what is next to them, in their own
 // brightness — the real figure is a hundred, a 3000 K surface outshines the
@@ -1165,6 +1169,32 @@ var BLOOM_FS = [
   '}'
 ].join('\n');
 
+// the sun: a disk where SUN is, with a glare round it, drawn into the HDR
+// canvas behind everything so the bodies hide it; the bloom does the rest
+var SUN_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'uniform vec2 uRes;',
+  'uniform vec2 uInvP;',
+  'uniform vec3 uSunEye;',
+  'uniform float uSunR;',       // the disk's angular radius, radians
+  'uniform float uSunI;',
+  'uniform float uHalo;',
+  'out vec4 o;',
+  'void main() {',
+  '  vec2 ndc = gl_FragCoord.xy / uRes * 2.0 - 1.0;',
+  '  vec3 ray = normalize(vec3(ndc * uInvP, -1.0));',
+  '  if (dot(ray, uSunEye) < 0.7) discard;',
+  '  float th = 2.0 * asin(min(0.5 * length(ray - uSunEye), 1.0));',   // the angle off the sun's centre, exact where it is small
+  '  float px = uInvP.y * 2.0 / uRes.y;',                               // one pixel in radians
+  '  float disk = 1.0 - smoothstep(uSunR - px, uSunR + px, th);',
+  '  float x = max(th - uSunR, 0.0);',
+  '  float halo = uHalo * (0.6 * exp(-x / (2.0 * uSunR)) + 0.12 * exp(-x / 0.05) + 0.02 * exp(-x / 0.3));',
+  '  gl_FragDepth = 0.9999;',
+  '  o = vec4(vec3(1.0, 0.96, 0.88) * (disk * uSunI) + vec3(1.0, 0.8, 0.55) * halo, 1.0);',
+  '}'
+].join('\n');
+
 var TONE_FS = [
   '#version 300 es',
   'precision highp float;',
@@ -1173,16 +1203,55 @@ var TONE_FS = [
   'uniform vec2 uInvRes;',
   'uniform float uBloomK;',
   'uniform float uExposure;',
+  'uniform float uFilmic;',
+  'uniform float uVig;',
   'uniform float uDbg;',
   'out vec4 o;',
+  // the ACES fit (Narkowicz): a toe that keeps the shadows dark and a
+  // shoulder that takes the hottest to white without a flat clip
+  'vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }',
   'void main() {',
   '  vec3 c = texelFetch(uHdr, ivec2(gl_FragCoord.xy), 0).rgb;',
   '  if (uDbg > 0.5) { o = vec4(vec3(fract(c.r * 4.0)) * step(0.001, c.r), 1.0); return; }',
   '  c += texture(uBloom, gl_FragCoord.xy * uInvRes).rgb * uBloomK;',
-  '  c = vec3(1.0) - exp(-c * uExposure);',
-  '  c = pow(c, vec3(0.92));',
+  '  vec2 q = gl_FragCoord.xy * uInvRes - 0.5;',
+  '  float vig = 1.0 - uVig * pow(dot(q, q) * 2.0, 1.1);',             // the corners are 1 − uVig, the centre untouched
+  '  c *= uExposure * vig;',
+  '  c = uFilmic > 0.0 ? aces(c * uFilmic) : pow(vec3(1.0) - exp(-c), vec3(0.92));',
+  '  o = vec4(vec3(0.016, 0.024, 0.04) * vig + c, 1.0);',
+  '}'
+].join('\n');
+
+// the last pass: FXAA over the tone-mapped frame — the impostors' silhouettes
+// and the star points are aliased — and the dither on the way out
+var FXAA_FS = [
+  '#version 300 es',
+  'precision highp float;',
+  'uniform sampler2D uSrc;',
+  'uniform vec2 uInvRes;',
+  'uniform float uOn;',
+  'out vec4 o;',
+  'float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }',
+  'void main() {',
+  '  vec2 uv = gl_FragCoord.xy * uInvRes;',
+  '  vec3 m = texture(uSrc, uv).rgb;',
   '  float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);',
-  '  o = vec4(vec3(0.016, 0.024, 0.04) + c + (n - 0.5) / 255.0, 1.0);',
+  '  vec3 dither = vec3((n - 0.5) / 255.0);',
+  '  if (uOn < 0.5) { o = vec4(m + dither, 1.0); return; }',
+  '  vec3 nw = texture(uSrc, uv + vec2(-1.0, -1.0) * uInvRes).rgb, ne = texture(uSrc, uv + vec2(1.0, -1.0) * uInvRes).rgb;',
+  '  vec3 sw = texture(uSrc, uv + vec2(-1.0, 1.0) * uInvRes).rgb, se = texture(uSrc, uv + vec2(1.0, 1.0) * uInvRes).rgb;',
+  '  float lNW = luma(nw), lNE = luma(ne), lSW = luma(sw), lSE = luma(se), lM = luma(m);',
+  '  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));',
+  '  float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));',
+  '  if (lMax - lMin < max(0.03, lMax * 0.125)) { o = vec4(m + dither, 1.0); return; }',   // no edge here
+  '  vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)), (lNW + lSW) - (lNE + lSE));',
+  '  float reduce = max((lNW + lNE + lSW + lSE) * (0.25 / 8.0), 1.0 / 128.0);',
+  '  float rcp = 1.0 / (min(abs(dir.x), abs(dir.y)) + reduce);',
+  '  dir = clamp(dir * rcp, vec2(-8.0), vec2(8.0)) * uInvRes;',
+  '  vec3 a = 0.5 * (texture(uSrc, uv + dir * (1.0 / 3.0 - 0.5)).rgb + texture(uSrc, uv + dir * (2.0 / 3.0 - 0.5)).rgb);',
+  '  vec3 b = a * 0.5 + 0.25 * (texture(uSrc, uv - dir * 0.5).rgb + texture(uSrc, uv + dir * 0.5).rgb);',
+  '  float lB = luma(b);',
+  '  o = vec4(((lB < lMin || lB > lMax) ? a : b) + dither, 1.0);',
   '}'
 ].join('\n');
 
@@ -1235,7 +1304,7 @@ function freeTarget(t) {
 }
 
 var simProg, slotProg, depProg, coarseProg, monoProg, cellProg, rigidProg, diagProg, ppGatherProg, ppForceProg, permProg;
-var starProg, gProg, blurProg, shadeProg, brightProg, bloomProg, toneProg, vao;
+var starProg, gProg, blurProg, shadeProg, sunProg, brightProg, bloomProg, toneProg, fxaaProg, vao;
 try {
   simProg = program(QUAD_VS, SIM_FS);
   slotProg = program(SLOT_VS, SLOT_FS);
@@ -1255,6 +1324,8 @@ try {
   brightProg = program(QUAD_VS, BRIGHT_FS);
   bloomProg = program(QUAD_VS, BLOOM_FS);
   toneProg = program(QUAD_VS, TONE_FS);
+  sunProg = program(QUAD_VS, SUN_FS);
+  fxaaProg = program(QUAD_VS, FXAA_FS);
 } catch (e) {
   fail('The simulation shaders failed to compile on this GPU.<br>' + String(e.message || e).slice(0, 200));
   return;
@@ -1368,9 +1439,9 @@ function freeScreen(t) {
   if (t.rb) gl.deleteRenderbuffer(t.rb);
 }
 // the bloom's pair, a quarter of the canvas each way, filtered so the taps
-// can fall between texels
-function bloomTarget(w, h) {
-  var t = { fbo: gl.createFramebuffer(), tex: floatTex(w, h, null, gl.RGBA16F, gl.HALF_FLOAT) };
+// can fall between texels; and, in bytes, the tone-mapped frame FXAA reads
+function bloomTarget(w, h, bytes) {
+  var t = { fbo: gl.createFramebuffer(), tex: bytes ? floatTex(w, h, null, gl.RGBA8, gl.UNSIGNED_BYTE, gl.RGBA) : floatTex(w, h, null, gl.RGBA16F, gl.HALF_FLOAT) };
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo);
@@ -1380,7 +1451,7 @@ function bloomTarget(w, h) {
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   return t;
 }
-var gbuf = null, blurA = null, blurB = null, bloomA = null, bloomB = null, bloomW = 0, bloomH = 0;
+var gbuf = null, blurA = null, blurB = null, bloomA = null, bloomB = null, bloomW = 0, bloomH = 0, ldr = null;
 var hdr = { fbo: gl.createFramebuffer(), tex: null, depth: gl.createRenderbuffer(), w: 0, h: 0 };
 function resize() {
   var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
@@ -1394,8 +1465,10 @@ function resize() {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);   // the bloom's bright pass reads it between texels
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   if (bloomA) { gl.deleteTexture(bloomA.tex); gl.deleteFramebuffer(bloomA.fbo); gl.deleteTexture(bloomB.tex); gl.deleteFramebuffer(bloomB.fbo); }
+  if (ldr) { gl.deleteTexture(ldr.tex); gl.deleteFramebuffer(ldr.fbo); }
   bloomW = Math.ceil(w / 4); bloomH = Math.ceil(h / 4);
   bloomA = bloomTarget(bloomW, bloomH); bloomB = bloomTarget(bloomW, bloomH);
+  ldr = bloomTarget(w, h, true);
   gl.bindFramebuffer(gl.FRAMEBUFFER, hdr.fbo);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, hdr.tex, 0);
   gl.bindRenderbuffer(gl.RENDERBUFFER, hdr.depth);
@@ -2441,6 +2514,15 @@ function render() {
   gl.depthMask(false);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.ONE, gl.ONE);
+  if (LOOK.sunI > 0 && sunEye[2] < 0) {           // the sun is ahead of the camera
+    var su = sunProg.u;
+    gl.useProgram(sunProg.p);
+    gl.uniform2f(su.uRes, w, h);
+    gl.uniform2f(su.uInvP, 1 / proj[0], 1 / proj[5]);
+    gl.uniform3fv(su.uSunEye, sunEye);
+    gl.uniform1f(su.uSunR, LOOK.sunR); gl.uniform1f(su.uSunI, LOOK.sunI); gl.uniform1f(su.uHalo, LOOK.halo);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
   if (S.stars) {
     gl.useProgram(starProg.p);
     gl.uniformMatrix4fv(starProg.u.uVP, false, vp);
@@ -2476,7 +2558,8 @@ function render() {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  // 5. the film: tone map with the vignette, then FXAA on the way to the screen
+  gl.bindFramebuffer(gl.FRAMEBUFFER, ldr.fbo);
   gl.viewport(0, 0, w, h);
   gl.useProgram(toneProg.p);
   var dbg = window.DBG | 0;
@@ -2487,6 +2570,15 @@ function render() {
   gl.uniform1f(toneProg.u.uBloomK, LOOK.bloomK);
   gl.uniform1f(toneProg.u.uDbg, dbg ? 1 : 0);
   gl.uniform1f(toneProg.u.uExposure, S.exposure);
+  gl.uniform1f(toneProg.u.uFilmic, LOOK.filmic);
+  gl.uniform1f(toneProg.u.uVig, dbg ? 0 : LOOK.vignette);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.useProgram(fxaaProg.p);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, ldr.tex);
+  gl.uniform1i(fxaaProg.u.uSrc, 0);
+  gl.uniform2f(fxaaProg.u.uInvRes, 1 / w, 1 / h);
+  gl.uniform1f(fxaaProg.u.uOn, dbg ? 0 : LOOK.fxaa);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
@@ -2639,6 +2731,7 @@ window.__impact = {
   get state() { return { analyzing: analyzing, pending: !!pending, worker: !!worker, analyses: analyses, analyzedAt: analyzedAt, stepNo: sim && sim.stepNo, waitStatus: pending ? gl.clientWaitSync(pending.sync, 0, 0) : null }; },
   sortNow: function () { analyses = 0; analyze(true); return report; },
   get look() { return LOOK; },
+  get cam() { return cam; },
   get lights() { return lastLights; },
   temps: function () {
     var fbo = gl.createFramebuffer(), buf = new Float32Array(sim.W * sim.H * 4);
